@@ -1,0 +1,20 @@
+{
+  "name": "Infinity Secure Vault",
+  "short_name": "Infinity",
+  "description": "Infinite security for your photos, videos, and files. Encrypted locally, accessible everywhere.",
+  "display": "standalone",
+  "start_url": "/",
+  "theme_color": "#0f172a",
+  "background_color": "#0f172a",
+  "icons": [
+    {
+      "src": "https://cdn-icons-png.flaticon.com/512/3135/3135715.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ],
+  "requestFramePermissions": [
+    "camera"
+  ]
+}
