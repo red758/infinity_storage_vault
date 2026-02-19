@@ -134,6 +134,7 @@ export default function App() {
     if (!activeProfile) return;
     const stored = await getFilesByVault(activeProfile.id);
     setFiles(stored);
+    await updateQuota();
   };
 
   const handleExport = async () => {
@@ -148,7 +149,7 @@ export default function App() {
       link.click();
       URL.revokeObjectURL(url);
     } catch (err) {
-      alert('Export failed.');
+      alert('Export failed. Storage access may be restricted.');
     } finally {
       setIsProcessing(false);
     }
@@ -165,7 +166,7 @@ export default function App() {
       alert('Import successful.');
       if (isUnlocked) await loadFiles();
     } catch (err) {
-      alert('Import failed.');
+      alert('Import failed. Invalid or corrupted vault file.');
     } finally {
       setIsProcessing(false);
     }
@@ -176,11 +177,9 @@ export default function App() {
       .filter(f => (filter === 'all' || f.type === filter))
       .filter(f => f.name.toLowerCase().includes(searchQuery.toLowerCase()))
       .sort((a, b) => {
-        // Sort by date (descending)
         if (b.createdAt !== a.createdAt) {
           return b.createdAt - a.createdAt;
         }
-        // Then by name (ascending)
         return a.name.localeCompare(b.name);
       });
   }, [files, filter, searchQuery]);
@@ -235,7 +234,7 @@ export default function App() {
       setIsUnlocked(true);
       setFiles([]);
     } catch (err) {
-      setError('Initialization failed.');
+      setError('Vault initialization failed.');
     } finally {
       setIsProcessing(false);
     }
@@ -248,7 +247,7 @@ export default function App() {
       if (videoRef.current) videoRef.current.srcObject = stream;
     } catch (err) {
       setShowCamera(false);
-      alert("Allow camera access.");
+      alert("Please allow camera access in your device settings.");
     }
   };
 
@@ -285,6 +284,8 @@ export default function App() {
       });
       stopCamera();
       await loadFiles();
+    } catch(e) {
+      alert("Could not save photo. Check storage space.");
     } finally {
       setIsProcessing(false);
     }
@@ -316,6 +317,8 @@ export default function App() {
         });
       }
       await loadFiles();
+    } catch(e) {
+      alert("Failed to secure some files. Storage may be full.");
     } finally {
       setIsProcessing(false);
     }
@@ -331,7 +334,6 @@ export default function App() {
       await updateQuota();
       setFileToDelete(null);
     } catch (err) {
-      console.error('Delete failed:', err);
       alert("Error: Failed to delete file.");
     } finally {
       setIsProcessing(false);
@@ -363,6 +365,8 @@ export default function App() {
       link.download = file.name;
       link.click();
       URL.revokeObjectURL(url);
+    } catch(e) {
+      alert("Failed to decrypt file.");
     } finally {
       setIsProcessing(false);
     }
@@ -380,7 +384,7 @@ export default function App() {
         link.download = file.name;
         link.click();
         URL.revokeObjectURL(url);
-        await new Promise(r => setTimeout(r, 500));
+        await new Promise(r => setTimeout(r, 800)); // Staggered to avoid browser lockup
       }
       alert("Restoration complete.");
     } finally {
@@ -468,10 +472,10 @@ export default function App() {
                 <div className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Local Capacity</div>
                 <div className="text-3xl font-black mb-4">{formatSize(stats.used)}</div>
                 <div className="w-full bg-slate-800 rounded-full h-2 overflow-hidden mb-3">
-                  <div className="bg-emerald-400 h-full transition-all duration-1000" style={{ width: `${Math.min(100, (quota.used / quota.total) * 100)}%` }}></div>
+                  <div className="bg-emerald-400 h-full transition-all duration-1000" style={{ width: `${Math.min(100, (quota.used / (quota.total || 1)) * 100)}%` }}></div>
                 </div>
                 <div className="flex justify-between items-center">
-                   <span className="text-[10px] font-bold text-slate-500">{Math.round((quota.used / quota.total) * 100)}% Used</span>
+                   <span className="text-[10px] font-bold text-slate-500">{Math.round((quota.used / (quota.total || 1)) * 100)}% Used</span>
                    <button onClick={() => setShowInfo(true)} className="text-slate-400 hover:text-white transition-colors"><InformationCircleIcon className="w-5 h-5" /></button>
                 </div>
              </div>
@@ -521,8 +525,8 @@ export default function App() {
 
           <div className="flex items-center gap-3 flex-shrink-0">
             {isProcessing && <ArrowPathIcon className="w-6 h-6 animate-spin text-indigo-600" />}
-            <button onClick={startCamera} className="p-3 bg-slate-100 rounded-2xl transition-all hover:bg-slate-200 active:scale-95"><CameraIcon className="w-6 h-6 text-slate-600" /></button>
-            <label className="bg-indigo-600 text-white font-black p-3 sm:px-6 sm:py-4 rounded-2xl cursor-pointer shadow-xl shadow-indigo-600/20 flex items-center gap-3 text-sm hover:bg-indigo-700 transition-all active:scale-95">
+            <button onClick={startCamera} title="Camera Snap" className="p-3 bg-slate-100 rounded-2xl transition-all hover:bg-slate-200 active:scale-95"><CameraIcon className="w-6 h-6 text-slate-600" /></button>
+            <label title="Upload Files" className="bg-indigo-600 text-white font-black p-3 sm:px-6 sm:py-4 rounded-2xl cursor-pointer shadow-xl shadow-indigo-600/20 flex items-center gap-3 text-sm hover:bg-indigo-700 transition-all active:scale-95">
               <CloudArrowUpIcon className="w-6 h-6" /> <span className="hidden sm:inline">Add</span>
               <input type="file" multiple onChange={handleFileUpload} className="hidden" />
             </label>
@@ -535,7 +539,7 @@ export default function App() {
               <div className="p-10 bg-white rounded-[4rem] border border-slate-100 shadow-sm flex flex-col items-center max-w-xs text-center">
                  <InfinityLogo className="w-24 h-24 mb-6 opacity-10" />
                  <p className="font-brand font-black uppercase tracking-widest text-[14px] opacity-40 leading-relaxed text-center">
-                    {searchQuery ? 'No search results found.' : 'Your safe is empty.'}
+                    {searchQuery ? 'No results found.' : 'Your safe is empty.'}
                  </p>
               </div>
             </div>
@@ -592,7 +596,6 @@ function CameraLens({ videoRef, onCapture, isProcessing, onClose }: any) {
   );
 }
 
-// Fix: Use 'any' for props to avoid strictly typed object literal mismatch with React 'key' and async callbacks
 function FileCard({ file, vaultPin, onDelete, onDownload, onPreview, onRename, isProcessing }: any) {
   const [thumbnailUrl, setThumbnailUrl] = useState<string | null>(null);
 
@@ -621,7 +624,7 @@ function FileCard({ file, vaultPin, onDelete, onDownload, onPreview, onRename, i
     return parseFloat((bytes / Math.pow(1024, i)).toFixed(1)) + ' ' + ['B', 'KB', 'MB', 'GB'][i];
   };
 
-  const savedPercent = Math.round(((file.size - file.compressedSize) / file.size) * 100);
+  const savedPercent = Math.round(((file.size - file.compressedSize) / (file.size || 1)) * 100);
 
   return (
     <div className={`group bg-white rounded-[3rem] border border-slate-200 overflow-hidden shadow-sm hover:shadow-2xl transition-all duration-500 flex flex-col ${isProcessing ? 'opacity-50 pointer-events-none' : ''}`}>
@@ -699,7 +702,7 @@ function DeleteConfirmModal({ onClose, onConfirm }: any) {
        <div className="bg-white rounded-[3rem] w-full max-w-sm p-10 shadow-2xl relative text-slate-900 border-t-8 border-rose-500 text-center">
           <div className="w-20 h-20 bg-rose-50 rounded-3xl flex items-center justify-center mb-8 mx-auto"><ExclamationTriangleIcon className="w-10 h-10 text-rose-600" /></div>
           <h2 className="text-2xl font-brand font-black mb-4 tracking-tight">Delete Forever?</h2>
-          <p className="text-slate-500 text-sm mb-10 leading-relaxed font-bold">This file will be completely wiped from your device storage.</p>
+          <p className="text-slate-500 text-sm mb-10 leading-relaxed font-bold">This file will be completely wiped from your secure safe.</p>
           <div className="grid grid-cols-2 gap-4">
              <button onClick={onClose} className="bg-slate-100 text-slate-600 py-5 rounded-2xl font-black uppercase text-[10px] tracking-widest active:scale-95 transition-all">Cancel</button>
              <button onClick={onConfirm} className="bg-rose-600 text-white py-5 rounded-2xl font-black uppercase text-[10px] tracking-widest active:scale-95 transition-all">Delete</button>
@@ -720,6 +723,7 @@ function PreviewModal({ file, vaultPin, onClose, onDownload }: any) {
         url = URL.createObjectURL(new Blob([decrypted], { type: file.mimeType }));
         setDataUrl(url);
       })
+      .catch(err => alert("Decryption failed. Check your security key."))
       .finally(() => setIsDecrypting(false));
     return () => { if (url) URL.revokeObjectURL(url); };
   }, [file.id, vaultPin]);
@@ -738,12 +742,12 @@ function PreviewModal({ file, vaultPin, onClose, onDownload }: any) {
             {isDecrypting ? (
                 <div className="flex flex-col items-center gap-6">
                    <ArrowPathIcon className="w-12 h-12 text-indigo-500 animate-spin" />
-                   <p className="text-[10px] font-black uppercase tracking-[0.5em] text-indigo-500">Decrypting...</p>
+                   <p className="text-[10px] font-black uppercase tracking-[0.5em] text-indigo-500">Accessing Vault...</p>
                 </div>
             ) : (
               <div className="w-full h-full flex items-center justify-center">
-                {file.type === 'image' && <img src={dataUrl!} alt="Preview" className="max-w-full max-h-full object-contain rounded-xl shadow-2xl" />}
-                {file.type === 'video' && <video src={dataUrl!} controls autoPlay className="max-w-full max-h-full object-contain rounded-xl shadow-2xl" />}
+                {file.type === 'image' && dataUrl && <img src={dataUrl} alt="Preview" className="max-w-full max-h-full object-contain rounded-xl shadow-2xl" />}
+                {file.type === 'video' && dataUrl && <video src={dataUrl} controls autoPlay className="max-w-full max-h-full object-contain rounded-xl shadow-2xl" />}
                 {(file.type === 'document' || file.type === 'other') && (
                   <div className="text-center p-12 bg-slate-900/80 rounded-[3rem] border border-white/5 max-w-sm text-white shadow-2xl">
                     <DocumentIcon className="w-20 h-20 text-indigo-400 mx-auto mb-6" />
@@ -791,6 +795,7 @@ function InfoModal({ stats, onClose }: any) {
                     <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Local Space Optimized</p>
                     <p className="text-4xl font-black text-emerald-600">{formatSize(stats.saved)}</p>
                 </div>
+                <div className="text-[10px] text-slate-400 font-bold uppercase mb-8">All files are encrypted on-device.</div>
                 <button onClick={onClose} className="w-full bg-slate-900 text-white py-5 rounded-2xl font-black uppercase text-xs font-brand">Dismiss</button>
             </div>
         </div>
@@ -799,14 +804,14 @@ function InfoModal({ stats, onClose }: any) {
 
 function MaintenanceModal({ files, handleDownloadAll, handleInstallApp, handleExport, handleImport, deleteVaultProfile, activeProfile, handleLockVault, onClose, isProcessing, setIsProcessing }: any) {
     const handleWipeData = async () => {
-        if(confirm('⚠️ PERMANENT WIPE: This will delete everything. Proceed?')) {
+        if(confirm('⚠️ PERMANENT WIPE: This will delete everything in this safe. Proceed?')) {
             setIsProcessing(true);
             try {
                 await deleteVaultProfile(activeProfile!.id);
-                alert('Safe wiped.');
+                alert('Safe wiped successfully.');
                 handleLockVault();
             } catch (err) {
-                alert('Error wiping.');
+                alert('Error wiping safe.');
             } finally {
                 setIsProcessing(false);
             }
@@ -837,17 +842,17 @@ function MaintenanceModal({ files, handleDownloadAll, handleInstallApp, handleEx
                     <div className="grid grid-cols-2 gap-4">
                         <button onClick={handleExport} disabled={isProcessing} className="flex flex-col items-center gap-2 p-6 bg-slate-100 rounded-[2rem] hover:bg-slate-200 active:scale-95 transition-all">
                             <ArrowUpOnSquareIcon className="w-8 h-8 text-indigo-600" />
-                            <span className="text-[10px] font-black uppercase tracking-widest">Backup</span>
+                            <span className="text-[10px] font-black uppercase tracking-widest">Backup Vault</span>
                         </button>
                         <label className="flex flex-col items-center gap-2 p-6 bg-slate-100 rounded-[2rem] hover:bg-slate-200 active:scale-95 cursor-pointer transition-all">
                             <ArrowDownOnSquareIcon className="w-8 h-8 text-indigo-600" />
-                            <span className="text-[10px] font-black uppercase tracking-widest">Import</span>
+                            <span className="text-[10px] font-black uppercase tracking-widest">Restore Vault</span>
                             <input type="file" onChange={handleImport} className="hidden" accept=".vault" />
                         </label>
                     </div>
 
                     <button onClick={handleWipeData} disabled={isProcessing} className="w-full flex items-center gap-3 justify-center text-rose-500 font-black uppercase text-[10px] tracking-widest pt-6 border-t mt-4">
-                        <TrashIcon className="w-4 h-4" /> Reset Safe (Wipe Device)
+                        <TrashIcon className="w-4 h-4" /> Permanent Reset
                     </button>
                 </div>
                 <button onClick={onClose} className="w-full mt-10 bg-slate-950 text-white py-5 rounded-2xl font-black uppercase text-xs font-brand">Close</button>
@@ -863,14 +868,14 @@ function InstallInstructionModal({ isIOS, onClose }: { isIOS: boolean, onClose: 
         <button onClick={onClose} className="absolute top-6 right-6 p-2 text-slate-400 hover:text-slate-900"><XMarkIcon className="w-7 h-7" /></button>
         <div className="w-20 h-20 bg-indigo-50 rounded-3xl flex items-center justify-center mb-8 mx-auto"><DevicePhoneMobileIcon className="w-10 h-10 text-indigo-600" /></div>
         <h2 className="text-3xl font-brand font-black mb-4 tracking-tight">Install Infinity</h2>
-        <p className="text-slate-500 text-sm mb-10 font-bold leading-relaxed">Pin Infinity to your home screen for full storage access.</p>
+        <p className="text-slate-500 text-sm mb-10 font-bold leading-relaxed">Pin Infinity to your home screen to use it as your default storage vault.</p>
         
         <div className="space-y-8 text-left">
            {isIOS ? (
              <>
                <div className="flex gap-4 items-start">
                   <div className="w-10 h-10 rounded-xl bg-slate-900 text-white flex items-center justify-center font-black flex-shrink-0 font-brand">1</div>
-                  <p className="text-xs text-slate-600 mt-2 font-bold">Tap the <ShareIcon className="w-4 h-4 inline text-indigo-600 mx-1" /> button in Safari's bottom toolbar.</p>
+                  <p className="text-xs text-slate-600 mt-2 font-bold">Tap the <ShareIcon className="w-4 h-4 inline text-indigo-600 mx-1" /> button in Safari bottom bar.</p>
                </div>
                <div className="flex gap-4 items-start">
                   <div className="w-10 h-10 rounded-xl bg-indigo-600 text-white flex items-center justify-center font-black flex-shrink-0 font-brand">2</div>
@@ -885,7 +890,7 @@ function InstallInstructionModal({ isIOS, onClose }: { isIOS: boolean, onClose: 
                </div>
                <div className="flex gap-4 items-start">
                   <div className="w-10 h-10 rounded-xl bg-indigo-600 text-white flex items-center justify-center font-black flex-shrink-0 font-brand">2</div>
-                  <p className="text-xs text-slate-600 mt-2 font-bold">Tap <span className="text-indigo-600">"Install App"</span> or "Add to Home Screen".</p>
+                  <p className="text-xs text-slate-600 mt-2 font-bold">Tap <span className="text-indigo-600">"Install App"</span> to finalize.</p>
                </div>
              </>
            )}
