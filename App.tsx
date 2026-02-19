@@ -130,11 +130,19 @@ export default function App() {
     }
   };
 
-  const loadFiles = async () => {
-    if (!activeProfile) return;
-    const stored = await getFilesByVault(activeProfile.id);
-    setFiles(stored);
-    await updateQuota();
+  const loadFiles = async (forceVaultId?: string) => {
+    const id = forceVaultId || activeProfile?.id;
+    if (!id) return;
+    setIsProcessing(true);
+    try {
+      const stored = await getFilesByVault(id);
+      setFiles([...stored]); // Fresh copy to trigger UI
+      await updateQuota();
+    } catch (err) {
+      console.error("Failed to load files", err);
+    } finally {
+      setIsProcessing(false);
+    }
   };
 
   const handleExport = async () => {
@@ -164,7 +172,7 @@ export default function App() {
       const backup: VaultBackup = JSON.parse(text);
       await importFullBackup(backup);
       alert('Import successful.');
-      if (isUnlocked) await loadFiles();
+      if (isUnlocked && activeProfile) await loadFiles(activeProfile.id);
     } catch (err) {
       alert('Import failed. Invalid format.');
     } finally {
@@ -190,8 +198,11 @@ export default function App() {
     setIsProcessing(true);
     try {
       const profiles = await getVaultProfiles();
-      const matchingProfiles = profiles.filter(p => p.name.toLowerCase() === loginName.toLowerCase());
+      const cleanName = loginName.trim().toLowerCase();
+      const matchingProfiles = profiles.filter(p => p.name.toLowerCase() === cleanName);
+      
       if (matchingProfiles.length === 0) throw new Error('NotFound');
+      
       let authenticatedProfile: VaultProfile | null = null;
       for (const profile of matchingProfiles) {
         try {
@@ -201,12 +212,16 @@ export default function App() {
           break;
         } catch (err) { continue; }
       }
+      
       if (!authenticatedProfile) throw new Error('InvalidPIN');
-      await requestPersistence();
+      
+      const persisted = await requestPersistence();
+      setIsPersistent(persisted);
+
       setVaultPin(pinEntry);
       setActiveProfile(authenticatedProfile);
       setIsUnlocked(true);
-      await loadFiles();
+      await loadFiles(authenticatedProfile.id);
     } catch (err) {
       setError('Incorrect ID or PIN.');
     } finally {
@@ -216,25 +231,29 @@ export default function App() {
 
   const handleCreateProfile = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (loginName.length < 2 || pinEntry.length < 4) return;
+    if (loginName.trim().length < 2 || pinEntry.length < 4) return;
     setIsProcessing(true);
     try {
       const checkData = new TextEncoder().encode("VERIFIED");
       const { encryptedData, iv, salt } = await encryptFile(checkData, pinEntry);
       const newProfile: VaultProfile = {
         id: crypto.randomUUID(),
-        name: loginName,
+        name: loginName.trim(),
         avatarColor: AVATAR_COLORS[Math.floor(Math.random() * AVATAR_COLORS.length)],
         verification: { encryptedData, iv, salt },
         createdAt: Date.now()
       };
       await saveVaultProfile(newProfile);
+      
+      const persisted = await requestPersistence();
+      setIsPersistent(persisted);
+
       setVaultPin(pinEntry);
       setActiveProfile(newProfile);
       setIsUnlocked(true);
       setFiles([]);
     } catch (err) {
-      setError('Initialization failed.');
+      setError('Vault creation failed.');
     } finally {
       setIsProcessing(false);
     }
@@ -283,9 +302,9 @@ export default function App() {
         createdAt: Date.now()
       });
       stopCamera();
-      await loadFiles();
+      await loadFiles(activeProfile.id);
     } catch (e) {
-      alert("Storage error during capture.");
+      alert("Capture error. Storage might be full.");
     } finally {
       setIsProcessing(false);
     }
@@ -316,14 +335,14 @@ export default function App() {
           createdAt: Date.now()
         });
       }
-      await loadFiles();
+      await loadFiles(activeProfile.id);
     } finally {
       setIsProcessing(false);
     }
   };
 
   const confirmDeleteFile = async () => {
-    if (!fileToDelete) return;
+    if (!fileToDelete || !activeProfile) return;
     const id = fileToDelete;
     setIsProcessing(true);
     try {
@@ -486,7 +505,7 @@ export default function App() {
                    <CpuChipIcon className="w-6 h-6 text-indigo-500" />
                    <span className="text-[10px] font-black uppercase tracking-widest">Vault Settings</span>
                 </div>
-                <div className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+                {isPersistent ? <div className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" /> : <div className="w-2 h-2 rounded-full bg-amber-500" />}
              </button>
           </div>
         </div>
@@ -496,48 +515,51 @@ export default function App() {
       </aside>
 
       <main className="flex-1 flex flex-col min-w-0 bg-slate-50 relative overflow-hidden">
-        <header className="header-safe h-auto min-h-[5rem] px-6 lg:px-12 py-4 flex items-center justify-between border-b border-slate-200 bg-white sticky top-0 z-40 gap-4">
-          <div className="flex items-center gap-3 flex-shrink-0">
-             <div className="bg-slate-900 p-2 rounded-xl lg:hidden"><InfinityLogo className="w-8 h-8 text-white" /></div>
+        <header className="header-safe h-auto min-h-[4rem] sm:min-h-[5rem] px-4 sm:px-12 py-3 sm:py-4 flex items-center justify-between border-b border-slate-200 bg-white sticky top-0 z-40 gap-3 sm:gap-4">
+          <div className="flex items-center gap-2 sm:gap-3 flex-shrink-0">
+             <div className="bg-slate-900 p-1.5 sm:p-2 rounded-xl lg:hidden"><InfinityLogo className="w-6 h-6 sm:w-8 sm:h-8 text-white" /></div>
              <div className="hidden sm:block">
-                <h2 className="font-brand font-black text-3xl tracking-tight">infinity</h2>
-                <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">secure vault</p>
+                <h2 className="font-brand font-black text-2xl sm:text-3xl tracking-tight leading-none">infinity</h2>
+                <div className="flex items-center gap-1.5">
+                   <p className="text-[8px] sm:text-[10px] font-bold text-slate-400 uppercase tracking-widest">secure vault</p>
+                   <CheckBadgeIcon className="w-3 h-3 text-emerald-500" />
+                </div>
              </div>
           </div>
 
           <div className="flex-1 max-w-md relative group">
-             <MagnifyingGlassIcon className="w-5 h-5 absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 group-focus-within:text-indigo-600 transition-colors" />
+             <MagnifyingGlassIcon className="w-4 h-4 sm:w-5 sm:h-5 absolute left-3 sm:left-4 top-1/2 -translate-y-1/2 text-slate-400 group-focus-within:text-indigo-600 transition-colors" />
              <input 
                 type="text" 
-                placeholder="Search safe..." 
-                className="w-full bg-slate-100 border-none rounded-2xl py-3 pl-12 pr-4 text-sm font-bold placeholder-slate-400 focus:ring-2 focus:ring-indigo-500 transition-all outline-none"
+                placeholder="Search..." 
+                className="w-full bg-slate-100 border-none rounded-xl sm:rounded-2xl py-2 sm:py-3 pl-9 sm:pl-12 pr-4 text-xs sm:text-sm font-bold placeholder-slate-400 focus:ring-2 focus:ring-indigo-500 transition-all outline-none"
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
              />
           </div>
 
-          <div className="flex items-center gap-3 flex-shrink-0">
-            {isProcessing && <ArrowPathIcon className="w-6 h-6 animate-spin text-indigo-600" />}
-            <button onClick={startCamera} title="Camera Snap" className="p-3 bg-slate-100 rounded-2xl transition-all hover:bg-slate-200 active:scale-95"><CameraIcon className="w-6 h-6 text-slate-600" /></button>
-            <label title="Upload Files" className="bg-indigo-600 text-white font-black p-3 lg:px-6 lg:py-4 rounded-2xl cursor-pointer shadow-xl shadow-indigo-600/20 flex items-center gap-3 text-sm hover:bg-indigo-700 transition-all active:scale-95">
-              <CloudArrowUpIcon className="w-6 h-6" /> <span className="hidden lg:inline">Add</span>
+          <div className="flex items-center gap-2 sm:gap-3 flex-shrink-0">
+            {isProcessing && <ArrowPathIcon className="w-5 h-5 sm:w-6 sm:h-6 animate-spin text-indigo-600" />}
+            <button onClick={startCamera} title="Camera Snap" className="p-2 sm:p-3 bg-slate-100 rounded-xl sm:rounded-2xl transition-all hover:bg-slate-200 active:scale-95"><CameraIcon className="w-5 h-5 sm:w-6 sm:h-6 text-slate-600" /></button>
+            <label title="Upload Files" className="bg-indigo-600 text-white font-black p-2 sm:px-6 sm:py-4 rounded-xl sm:rounded-2xl cursor-pointer shadow-xl shadow-indigo-600/20 flex items-center gap-2 sm:gap-3 text-xs sm:text-sm hover:bg-indigo-700 transition-all active:scale-95">
+              <CloudArrowUpIcon className="w-5 h-5 sm:w-6 sm:h-6" /> <span className="hidden lg:inline">Add</span>
               <input type="file" multiple onChange={handleFileUpload} className="hidden" />
             </label>
           </div>
         </header>
 
-        <div className="flex-1 overflow-y-auto p-6 lg:p-12 scrollbar-hide pb-32">
+        <div className="flex-1 overflow-y-auto p-3 sm:p-12 scrollbar-hide pb-32">
           {filteredAndSortedFiles.length === 0 ? (
             <div className="h-full flex flex-col items-center justify-center text-slate-300">
-              <div className="p-10 bg-white rounded-[4rem] border border-slate-100 shadow-sm flex flex-col items-center max-w-xs text-center">
-                 <InfinityLogo className="w-24 h-24 mb-6 opacity-10" />
-                 <p className="font-brand font-black uppercase tracking-widest text-[14px] opacity-40 leading-relaxed text-center">
-                    {searchQuery ? 'No results found.' : 'Your safe is empty.'}
+              <div className="p-8 sm:p-10 bg-white rounded-[3rem] sm:rounded-[4rem] border border-slate-100 shadow-sm flex flex-col items-center max-w-xs text-center">
+                 <InfinityLogo className="w-16 h-16 sm:w-24 sm:h-24 mb-6 opacity-10" />
+                 <p className="font-brand font-black uppercase tracking-widest text-[12px] sm:text-[14px] opacity-40 leading-relaxed text-center">
+                    {searchQuery ? 'No results.' : 'Safe is empty.'}
                  </p>
               </div>
             </div>
           ) : (
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4 gap-8">
+            <div className="grid grid-cols-2 sm:grid-cols-2 lg:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4 gap-3 sm:gap-8">
               {filteredAndSortedFiles.map(file => (
                 <FileCard 
                   key={file.id} 
@@ -554,7 +576,7 @@ export default function App() {
           )}
         </div>
 
-        <nav className="mobile-nav lg:hidden fixed bottom-0 inset-x-0 h-20 bg-white/95 backdrop-blur-xl border-t border-slate-200 flex items-center justify-around px-6 z-40">
+        <nav className="mobile-nav lg:hidden fixed bottom-0 inset-x-0 h-16 sm:h-20 bg-white/95 backdrop-blur-xl border-t border-slate-200 flex items-center justify-around px-4 sm:px-6 z-40">
             <MobileNavItem icon={<FolderIcon />} active={filter === 'all'} onClick={() => setFilter('all')} />
             <MobileNavItem icon={<PhotoIcon />} active={filter === 'image'} onClick={() => setFilter('image')} />
             <MobileNavItem icon={<VideoCameraIcon />} active={filter === 'video'} onClick={() => setFilter('video')} />
@@ -564,7 +586,7 @@ export default function App() {
       </main>
 
       {showInfo && <InfoModal stats={stats} onClose={() => setShowInfo(false)} />}
-      {showMaintenance && <MaintenanceModal files={files} handleDownloadAll={handleDownloadAll} handleInstallApp={handleInstallApp} handleExport={handleExport} handleImport={handleImport} deleteVaultProfile={deleteVaultProfile} activeProfile={activeProfile} handleLockVault={handleLockVault} onClose={() => setShowMaintenance(false)} isProcessing={isProcessing} setIsProcessing={setIsProcessing} />}
+      {showMaintenance && <MaintenanceModal files={files} handleDownloadAll={handleDownloadAll} handleInstallApp={handleInstallApp} handleExport={handleExport} handleImport={handleImport} deleteVaultProfile={deleteVaultProfile} activeProfile={activeProfile} handleLockVault={handleLockVault} onClose={() => setShowMaintenance(false)} isProcessing={isProcessing} setIsProcessing={setIsProcessing} isPersistent={isPersistent} />}
       {previewFile && <PreviewModal file={previewFile} vaultPin={vaultPin} onClose={() => setPreviewFile(null)} onDownload={() => handleDownload(previewFile)} />}
       {showCamera && <CameraLens videoRef={videoRef} onCapture={capturePhoto} isProcessing={isProcessing} onClose={stopCamera} />}
       {fileToDelete && <DeleteConfirmModal onClose={() => setFileToDelete(null)} onConfirm={confirmDeleteFile} />}
@@ -579,11 +601,11 @@ function CameraLens({ videoRef, onCapture, isProcessing, onClose }: any) {
     <div className="fixed inset-0 bg-slate-950 z-[500] flex flex-col items-center justify-center animate-in fade-in duration-300">
       <video ref={videoRef} autoPlay playsInline className="w-full h-full object-cover" />
       <div className="absolute inset-x-0 bottom-0 h-40 bg-gradient-to-t from-black/80 to-transparent flex items-center justify-center gap-10 pb-12">
-        <button onClick={onClose} className="p-5 bg-white/10 text-white rounded-full backdrop-blur-xl border border-white/20 active:scale-95 transition-all"><XMarkIcon className="w-8 h-8" /></button>
-        <button onClick={onCapture} disabled={isProcessing} className="w-24 h-24 bg-white rounded-full flex items-center justify-center shadow-2xl active:scale-90 transition-all border-8 border-slate-200">
-          {isProcessing ? <ArrowPathIcon className="w-10 h-10 text-indigo-600 animate-spin" /> : <div className="w-16 h-16 rounded-full border-4 border-slate-900" />}
+        <button onClick={onClose} className="p-4 sm:p-5 bg-white/10 text-white rounded-full backdrop-blur-xl border border-white/20 active:scale-95 transition-all"><XMarkIcon className="w-7 h-7 sm:w-8 sm:h-8" /></button>
+        <button onClick={onCapture} disabled={isProcessing} className="w-20 h-20 sm:w-24 sm:h-24 bg-white rounded-full flex items-center justify-center shadow-2xl active:scale-90 transition-all border-8 border-slate-200">
+          {isProcessing ? <ArrowPathIcon className="w-10 h-10 text-indigo-600 animate-spin" /> : <div className="w-14 h-14 sm:w-16 sm:h-16 rounded-full border-4 border-slate-900" />}
         </button>
-        <div className="w-16" />
+        <div className="w-14 sm:w-16" />
       </div>
     </div>
   );
@@ -616,18 +638,18 @@ function FileCard({ file, vaultPin, onDelete, onDownload, onPreview, onRename, i
   const savedPercent = Math.round(((file.size - file.compressedSize) / (file.size || 1)) * 100);
 
   return (
-    <div className={`group bg-white rounded-[3rem] border border-slate-200 overflow-hidden shadow-sm hover:shadow-2xl transition-all duration-500 flex flex-col ${isProcessing ? 'opacity-50 pointer-events-none' : ''}`}>
+    <div className={`group bg-white rounded-[1.8rem] sm:rounded-[3rem] border border-slate-200 overflow-hidden shadow-sm hover:shadow-2xl transition-all duration-500 flex flex-col ${isProcessing ? 'opacity-50 pointer-events-none' : ''}`}>
       <div onClick={onPreview} className="aspect-[5/4] bg-slate-100 relative flex items-center justify-center overflow-hidden cursor-pointer group/card">
         {file.type === 'image' && thumbnailUrl ? (
           <img src={thumbnailUrl} alt={file.name} className="w-full h-full object-cover transition-transform duration-1000 lg:group-hover/card:scale-110" />
         ) : file.type === 'video' ? (
           <div className="relative w-full h-full flex items-center justify-center bg-indigo-50">
-             <VideoCameraIcon className="w-16 h-16 text-indigo-200" />
-             <PlayIcon className="w-12 h-12 text-white absolute fill-indigo-600 drop-shadow-xl" />
+             <VideoCameraIcon className="w-10 h-10 sm:w-16 sm:h-16 text-indigo-200" />
+             <PlayIcon className="w-8 h-8 sm:w-12 sm:h-12 text-white absolute fill-indigo-600 drop-shadow-xl" />
           </div>
         ) : (
           <div className="bg-slate-50 w-full h-full flex items-center justify-center text-slate-300">
-             <DocumentIcon className="w-16 h-16" />
+             <DocumentIcon className="w-10 h-10 sm:w-16 sm:h-16" />
           </div>
         )}
         <div className="absolute inset-0 bg-slate-950/70 opacity-0 lg:group-hover/card:opacity-100 transition-opacity hidden lg:flex items-center justify-center gap-3 backdrop-blur-sm pointer-events-auto">
@@ -637,32 +659,32 @@ function FileCard({ file, vaultPin, onDelete, onDownload, onPreview, onRename, i
           <button onClick={(e) => { e.stopPropagation(); onDelete(); }} className="p-3 bg-rose-500 rounded-2xl text-white hover:scale-110 active:scale-95 transition-transform"><TrashIcon className="w-5 h-5" /></button>
         </div>
       </div>
-      <div className="p-6 flex-1 flex flex-col">
-        <h3 className="text-sm font-black text-slate-800 truncate mb-1 lg:group-hover/card:text-indigo-600 transition-colors">{file.name}</h3>
+      <div className="p-3 sm:p-6 flex-1 flex flex-col">
+        <h3 className="text-[10px] sm:text-sm font-black text-slate-800 truncate mb-1 lg:group-hover/card:text-indigo-600 transition-colors">{file.name}</h3>
         
-        <div className="flex flex-col gap-1 mb-4">
-           <div className="flex justify-between items-center text-[10px] text-slate-400 font-bold uppercase tracking-widest">
+        <div className="flex flex-col gap-0.5 sm:gap-1 mb-3 sm:mb-4">
+           <div className="flex justify-between items-center text-[8px] sm:text-[10px] text-slate-400 font-bold uppercase tracking-widest">
               <span>{file.type}</span>
               <span className="text-slate-500 line-through opacity-40 font-black">{formatSize(file.size)}</span>
            </div>
            <div className="flex justify-between items-center mt-0.5">
-              <div className="flex items-center gap-1.5 text-[10px] text-slate-300 font-black uppercase tracking-widest">
+              <div className="hidden sm:flex items-center gap-1.5 text-[10px] text-slate-300 font-black uppercase tracking-widest">
                  <CalendarDaysIcon className="w-3 h-3 text-slate-200" />
                  <span>{formatDate(file.createdAt)}</span>
               </div>
-              <div className="flex items-center gap-1 text-[10px] font-black text-emerald-600 uppercase tracking-tighter bg-emerald-50 px-2 py-0.5 rounded-full">
-                 <BoltIcon className="w-3 h-3" />
-                 <span>{formatSize(file.compressedSize)} ({savedPercent}% saved)</span>
+              <div className="flex items-center gap-0.5 sm:gap-1 text-[7px] sm:text-[10px] font-black text-emerald-600 uppercase tracking-tighter bg-emerald-50 px-1.5 sm:px-2 py-0.5 rounded-full">
+                 <BoltIcon className="w-2 sm:w-3 h-2 sm:h-3" />
+                 <span>{formatSize(file.compressedSize)}</span>
               </div>
            </div>
         </div>
 
-        <div className="mt-auto flex items-center gap-2">
-            <button onClick={(e) => { e.stopPropagation(); onDownload(); }} className="flex-1 flex items-center justify-center gap-2 px-4 py-3 bg-emerald-600 text-white rounded-2xl text-[10px] font-black uppercase tracking-widest shadow-lg shadow-emerald-600/20 active:scale-95 transition-all hover:bg-emerald-700">
-               <ArrowDownTrayIcon className="w-4 h-4" /> Restore
+        <div className="mt-auto flex items-center gap-1.5 sm:gap-2">
+            <button onClick={(e) => { e.stopPropagation(); onDownload(); }} className="flex-1 flex items-center justify-center gap-1 sm:gap-2 px-2 sm:px-4 py-2 sm:py-3 bg-emerald-600 text-white rounded-xl sm:rounded-2xl text-[8px] sm:text-[10px] font-black uppercase tracking-widest shadow-lg shadow-emerald-600/20 active:scale-95 transition-all hover:bg-emerald-700">
+               <ArrowDownTrayIcon className="w-3 sm:w-4 h-3 sm:h-4" /> <span className="hidden sm:inline">Restore</span>
             </button>
-            <button onClick={(e) => { e.stopPropagation(); onRename(); }} className="lg:hidden p-3 bg-slate-100 text-slate-600 rounded-2xl active:scale-95 transition-all"><PencilSquareIcon className="w-4 h-4" /></button>
-            <button onClick={(e) => { e.stopPropagation(); onDelete(); }} className="lg:hidden p-3 bg-rose-50 text-rose-500 rounded-2xl active:scale-95 transition-all"><TrashIcon className="w-4 h-4" /></button>
+            <button onClick={(e) => { e.stopPropagation(); onRename(); }} className="lg:hidden p-2 sm:p-3 bg-slate-100 text-slate-600 rounded-xl sm:rounded-2xl active:scale-95 transition-all"><PencilSquareIcon className="w-3.5 sm:w-4 h-3.5 sm:h-4" /></button>
+            <button onClick={(e) => { e.stopPropagation(); onDelete(); }} className="lg:hidden p-2 sm:p-3 bg-rose-50 text-rose-500 rounded-xl sm:rounded-2xl active:scale-95 transition-all"><TrashIcon className="w-3.5 sm:w-4 h-3.5 sm:h-4" /></button>
         </div>
       </div>
     </div>
@@ -671,7 +693,7 @@ function FileCard({ file, vaultPin, onDelete, onDownload, onPreview, onRename, i
 
 function MobileNavItem({ icon, active, onClick }: any) {
   return (
-    <button onClick={onClick} className={`p-4 rounded-2xl transition-all active:scale-90 ${active ? 'text-indigo-600 bg-indigo-50 shadow-sm' : 'text-slate-400'}`}>
+    <button onClick={onClick} className={`p-3 sm:p-4 rounded-xl sm:rounded-2xl transition-all active:scale-90 ${active ? 'text-indigo-600 bg-indigo-50 shadow-sm' : 'text-slate-400'}`}>
       {React.cloneElement(icon, { className: "w-6 h-6" })}
     </button>
   );
@@ -688,9 +710,9 @@ function SidebarItem({ icon, label, active, onClick }: any) {
 
 function ModalWrapper({ children, onClose }: { children?: React.ReactNode, onClose: () => void }) {
     return (
-        <div className="fixed inset-0 bg-slate-950/90 z-[500] flex items-center justify-center p-6 backdrop-blur-xl animate-in fade-in duration-300">
-            <div className="bg-white rounded-[3rem] w-full max-w-md p-10 shadow-2xl relative text-slate-900 border-t-8 border-indigo-600 animate-in zoom-in-95 duration-300 max-h-[90vh] overflow-y-auto">
-                <button onClick={onClose} className="absolute top-6 right-6 p-2 text-slate-400 hover:text-slate-900 transition-colors"><XMarkIcon className="w-7 h-7" /></button>
+        <div className="fixed inset-0 bg-slate-950/90 z-[500] flex items-center justify-center p-4 sm:p-6 backdrop-blur-xl animate-in fade-in duration-300">
+            <div className="bg-white rounded-[2rem] sm:rounded-[3rem] w-full max-w-md p-6 sm:p-10 shadow-2xl relative text-slate-900 border-t-8 border-indigo-600 animate-in zoom-in-95 duration-300 max-h-[90vh] overflow-y-auto">
+                <button onClick={onClose} className="absolute top-4 sm:top-6 right-4 sm:right-6 p-2 text-slate-400 hover:text-slate-900 transition-colors"><XMarkIcon className="w-6 h-6 sm:w-7 sm:h-7" /></button>
                 {children}
             </div>
         </div>
@@ -701,19 +723,19 @@ function InfoModal({ stats, onClose }: any) {
     return (
         <ModalWrapper onClose={onClose}>
             <div className="text-center">
-                <div className="w-20 h-20 bg-emerald-50 rounded-3xl flex items-center justify-center mb-8 mx-auto"><CheckBadgeIcon className="w-10 h-10 text-emerald-600" /></div>
-                <h2 className="text-4xl font-brand font-black mb-6 tracking-tight">vault stats</h2>
-                <div className="bg-slate-50 p-6 rounded-[2rem] mb-6">
-                    <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Total Space Saved</p>
-                    <p className="text-4xl font-black text-emerald-600">{formatSize(stats.saved)}</p>
+                <div className="w-16 h-16 sm:w-20 sm:h-20 bg-emerald-50 rounded-3xl flex items-center justify-center mb-6 sm:mb-8 mx-auto"><CheckBadgeIcon className="w-8 h-8 sm:w-10 sm:h-10 text-emerald-600" /></div>
+                <h2 className="text-3xl sm:text-4xl font-brand font-black mb-4 sm:mb-6 tracking-tight text-center">vault stats</h2>
+                <div className="bg-slate-50 p-5 sm:p-6 rounded-[1.5rem] sm:rounded-[2rem] mb-6">
+                    <p className="text-[9px] sm:text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Total Space Saved</p>
+                    <p className="text-3xl sm:text-4xl font-black text-emerald-600">{formatSize(stats.saved)}</p>
                 </div>
-                <button onClick={onClose} className="w-full bg-slate-900 text-white py-5 rounded-2xl font-black uppercase text-xs tracking-widest active:scale-95 transition-all">Understood</button>
+                <button onClick={onClose} className="w-full bg-slate-900 text-white py-4 sm:py-5 rounded-2xl font-black uppercase text-xs tracking-widest active:scale-95 transition-all">Understood</button>
             </div>
         </ModalWrapper>
     );
 }
 
-function MaintenanceModal({ files, handleDownloadAll, handleInstallApp, handleExport, handleImport, deleteVaultProfile, activeProfile, handleLockVault, onClose, isProcessing, setIsProcessing }: any) {
+function MaintenanceModal({ files, handleDownloadAll, handleInstallApp, handleExport, handleImport, deleteVaultProfile, activeProfile, handleLockVault, onClose, isProcessing, setIsProcessing, isPersistent }: any) {
     const handleWipe = async () => {
         if(confirm('⚠️ Permanent wipe: proceed?')) {
             setIsProcessing(true);
@@ -721,44 +743,57 @@ function MaintenanceModal({ files, handleDownloadAll, handleInstallApp, handleEx
         }
     };
     return (
-        <div className="fixed inset-0 bg-slate-900/90 backdrop-blur-xl z-[100] flex items-center justify-center p-6 animate-in zoom-in-95 duration-300">
-            <div className="bg-white rounded-[3rem] w-full max-w-lg p-10 shadow-2xl relative text-slate-900 max-h-[90vh] overflow-y-auto scrollbar-hide">
-                <button onClick={onClose} className="absolute top-6 right-6 p-2 text-slate-400 hover:text-slate-900"><XMarkIcon className="w-7 h-7" /></button>
-                <h2 className="text-4xl font-brand font-black mb-8 tracking-tight">vault control</h2>
-                <div className="space-y-4">
-                    <button onClick={handleDownloadAll} disabled={files.length === 0 || isProcessing} className="w-full flex items-center justify-between p-7 bg-emerald-600 text-white rounded-[2rem] shadow-xl active:scale-95 transition-all">
-                       <div className="flex items-center gap-5">
-                          <ArrowDownCircleIcon className="w-8 h-8" />
-                          <div className="text-left"><p className="text-sm font-black font-brand">Restore Everything</p></div>
+        <div className="fixed inset-0 bg-slate-900/90 backdrop-blur-xl z-[100] flex items-center justify-center p-4 sm:p-6 animate-in zoom-in-95 duration-300">
+            <div className="bg-white rounded-[2rem] sm:rounded-[3rem] w-full max-w-lg p-6 sm:p-10 shadow-2xl relative text-slate-900 max-h-[90vh] overflow-y-auto scrollbar-hide">
+                <button onClick={onClose} className="absolute top-4 sm:top-6 right-4 sm:right-6 p-2 text-slate-400 hover:text-slate-900"><XMarkIcon className="w-6 h-6 sm:w-7 sm:h-7" /></button>
+                <h2 className="text-3xl sm:text-4xl font-brand font-black mb-6 sm:mb-8 tracking-tight text-center">vault control</h2>
+                
+                {/* Persistence Status Badge */}
+                <div className={`mb-6 p-4 rounded-2xl flex items-center justify-between gap-4 border ${isPersistent ? 'bg-emerald-50 border-emerald-100 text-emerald-800' : 'bg-amber-50 border-amber-100 text-amber-800'}`}>
+                   <div className="flex items-center gap-3">
+                      <ShieldCheckIcon className={`w-6 h-6 ${isPersistent ? 'text-emerald-600' : 'text-amber-600'}`} />
+                      <div>
+                         <p className="text-[10px] font-black uppercase tracking-widest">Storage Status</p>
+                         <p className="text-xs font-bold">{isPersistent ? 'Protected & Permanent' : 'Temporary (Unprotected)'}</p>
+                      </div>
+                   </div>
+                   {!isPersistent && <InformationCircleIcon className="w-5 h-5 opacity-50" />}
+                </div>
+
+                <div className="space-y-3 sm:space-y-4">
+                    <button onClick={handleDownloadAll} disabled={files.length === 0 || isProcessing} className="w-full flex items-center justify-between p-5 sm:p-7 bg-emerald-600 text-white rounded-[1.5rem] sm:rounded-[2rem] shadow-xl active:scale-95 transition-all">
+                       <div className="flex items-center gap-3 sm:gap-5">
+                          <ArrowDownCircleIcon className="w-6 h-6 sm:w-8 sm:h-8" />
+                          <div className="text-left"><p className="text-xs sm:text-sm font-black font-brand leading-none">Restore Everything</p></div>
                        </div>
-                       <span className="font-brand font-black text-2xl">{files.length}</span>
+                       <span className="font-brand font-black text-lg sm:text-2xl">{files.length}</span>
                     </button>
                     
-                    <button onClick={handleInstallApp} className="w-full flex items-center justify-between p-6 bg-indigo-50 border border-indigo-100 rounded-[2rem] hover:bg-indigo-100 transition-all text-indigo-600 shadow-sm active:scale-95">
-                        <div className="flex items-center gap-5">
-                            <DevicePhoneMobileIcon className="w-8 h-8" />
-                            <p className="text-sm font-black font-brand">Shortcut Guide</p>
+                    <button onClick={handleInstallApp} className="w-full flex items-center justify-between p-5 sm:p-6 bg-indigo-50 border border-indigo-100 rounded-[1.5rem] sm:rounded-[2rem] hover:bg-indigo-100 transition-all text-indigo-600 shadow-sm active:scale-95">
+                        <div className="flex items-center gap-3 sm:gap-5">
+                            <DevicePhoneMobileIcon className="w-6 h-6 sm:w-8 sm:h-8" />
+                            <p className="text-xs sm:text-sm font-black font-brand leading-none">Shortcut Guide</p>
                         </div>
-                        <ArrowDownTrayIcon className="w-6 h-6" />
+                        <ArrowDownTrayIcon className="w-5 h-5 sm:w-6 sm:h-6" />
                     </button>
 
-                    <div className="grid grid-cols-2 gap-4">
-                        <button onClick={handleExport} className="flex flex-col items-center gap-2 p-6 bg-slate-100 rounded-[2rem] hover:bg-slate-200 active:scale-95 transition-all">
-                            <ArrowUpOnSquareIcon className="w-8 h-8 text-indigo-600" />
-                            <span className="text-[10px] font-black uppercase tracking-widest">Backup</span>
+                    <div className="grid grid-cols-2 gap-3 sm:gap-4">
+                        <button onClick={handleExport} className="flex flex-col items-center gap-2 p-4 sm:p-6 bg-slate-100 rounded-[1.5rem] sm:rounded-[2rem] hover:bg-slate-200 active:scale-95 transition-all">
+                            <ArrowUpOnSquareIcon className="w-6 h-6 sm:w-8 sm:h-8 text-indigo-600" />
+                            <span className="text-[8px] sm:text-[10px] font-black uppercase tracking-widest">Backup</span>
                         </button>
-                        <label className="flex flex-col items-center gap-2 p-6 bg-slate-100 rounded-[2rem] hover:bg-slate-200 active:scale-95 cursor-pointer transition-all">
-                            <ArrowDownOnSquareIcon className="w-8 h-8 text-indigo-600" />
-                            <span className="text-[10px] font-black uppercase tracking-widest">Restore</span>
+                        <label className="flex flex-col items-center gap-2 p-4 sm:p-6 bg-slate-100 rounded-[1.5rem] sm:rounded-[2rem] hover:bg-slate-200 active:scale-95 cursor-pointer transition-all">
+                            <ArrowDownOnSquareIcon className="w-6 h-6 sm:w-8 sm:h-8 text-indigo-600" />
+                            <span className="text-[8px] sm:text-[10px] font-black uppercase tracking-widest">Restore</span>
                             <input type="file" onChange={handleImport} className="hidden" accept=".vault" />
                         </label>
                     </div>
 
-                    <button onClick={handleWipe} className="w-full flex items-center gap-3 justify-center text-rose-500 font-black uppercase text-[10px] tracking-widest pt-6 border-t mt-4 active:scale-95 transition-all">
-                        <TrashIcon className="w-4 h-4" /> Permanent Reset
+                    <button onClick={handleWipe} className="w-full flex items-center gap-2 justify-center text-rose-500 font-black uppercase text-[8px] sm:text-[10px] tracking-widest pt-4 sm:pt-6 border-t mt-3 sm:mt-4 active:scale-95 transition-all">
+                        <TrashIcon className="w-3.5 sm:w-4 h-3.5 sm:h-4" /> Permanent Reset
                     </button>
                 </div>
-                <button onClick={onClose} className="w-full mt-10 bg-slate-950 text-white py-5 rounded-2xl font-black uppercase text-xs font-brand active:scale-95">Close Settings</button>
+                <button onClick={onClose} className="w-full mt-8 sm:mt-10 bg-slate-950 text-white py-4 sm:py-5 rounded-2xl font-black uppercase text-[10px] sm:text-xs font-brand active:scale-95">Close Settings</button>
             </div>
         </div>
     );
@@ -780,29 +815,29 @@ function PreviewModal({ file, vaultPin, onClose, onDownload }: any) {
   }, [file.id, vaultPin]);
 
   return (
-    <div className="fixed inset-0 bg-slate-950/95 z-[500] flex flex-col items-center justify-center p-6 sm:p-10 animate-in fade-in duration-300 backdrop-blur-xl">
-      <div className="w-full h-full max-w-7xl flex flex-col bg-slate-900/40 rounded-[3rem] border border-white/5 overflow-hidden shadow-2xl">
-        <div className="px-8 py-6 flex justify-between items-center bg-slate-900/80 border-b border-white/5 z-20">
-            <h2 className="text-sm font-black text-white truncate max-w-[50%]">{file.name}</h2>
-            <div className="flex gap-3">
-              <button onClick={onDownload} className="flex items-center gap-2 px-6 py-4 bg-emerald-600 text-white rounded-2xl font-black uppercase text-[10px] tracking-widest active:scale-95 shadow-xl">Restore</button>
-              <button onClick={onClose} className="p-4 bg-white/5 text-white rounded-2xl hover:bg-white/10 active:scale-95"><XMarkIcon className="w-7 h-7" /></button>
+    <div className="fixed inset-0 bg-slate-950/95 z-[500] flex flex-col items-center justify-center p-3 sm:p-10 animate-in fade-in duration-300 backdrop-blur-xl">
+      <div className="w-full h-full max-w-7xl flex flex-col bg-slate-900/40 rounded-[2rem] sm:rounded-[3rem] border border-white/5 overflow-hidden shadow-2xl">
+        <div className="px-5 sm:px-8 py-4 sm:py-6 flex justify-between items-center bg-slate-900/80 border-b border-white/5 z-20">
+            <h2 className="text-xs sm:text-sm font-black text-white truncate max-w-[40%]">{file.name}</h2>
+            <div className="flex gap-2 sm:gap-3">
+              <button onClick={onDownload} className="flex items-center gap-2 px-4 sm:px-6 py-2.5 sm:py-4 bg-emerald-600 text-white rounded-xl sm:rounded-2xl font-black uppercase text-[8px] sm:text-[10px] tracking-widest active:scale-95 shadow-xl">Restore</button>
+              <button onClick={onClose} className="p-2.5 sm:p-4 bg-white/5 text-white rounded-xl sm:rounded-2xl hover:bg-white/10 active:scale-95"><XMarkIcon className="w-5 h-5 sm:w-7 sm:h-7" /></button>
             </div>
         </div>
-        <div className="flex-1 relative flex items-center justify-center p-4 overflow-hidden text-white">
+        <div className="flex-1 relative flex items-center justify-center p-2 sm:p-4 overflow-hidden text-white">
             {isDecrypting ? (
-                <div className="flex flex-col items-center gap-6">
-                   <ArrowPathIcon className="w-12 h-12 text-indigo-500 animate-spin" />
-                   <p className="text-[10px] font-black uppercase tracking-[0.5em] text-indigo-500">Unlocking Safe...</p>
+                <div className="flex flex-col items-center gap-4 sm:gap-6">
+                   <ArrowPathIcon className="w-10 h-10 sm:w-12 sm:h-12 text-indigo-500 animate-spin" />
+                   <p className="text-[8px] sm:text-[10px] font-black uppercase tracking-[0.5em] text-indigo-500 text-center">Unlocking Safe...</p>
                 </div>
             ) : (
               <div className="w-full h-full flex items-center justify-center">
-                {file.type === 'image' && dataUrl && <img src={dataUrl} alt="Preview" className="max-w-full max-h-full object-contain rounded-xl shadow-2xl" />}
-                {file.type === 'video' && dataUrl && <video src={dataUrl} controls autoPlay className="max-w-full max-h-full object-contain rounded-xl shadow-2xl" />}
+                {file.type === 'image' && dataUrl && <img src={dataUrl} alt="Preview" className="max-w-full max-h-full object-contain rounded-lg sm:rounded-xl shadow-2xl" />}
+                {file.type === 'video' && dataUrl && <video src={dataUrl} controls autoPlay className="max-w-full max-h-full object-contain rounded-lg sm:rounded-xl shadow-2xl" />}
                 {(file.type === 'document' || file.type === 'other') && (
-                  <div className="text-center p-12 bg-slate-900/80 rounded-[3rem] border border-white/5 max-w-sm text-white shadow-2xl">
-                    <DocumentIcon className="w-20 h-20 text-indigo-400 mx-auto mb-6" />
-                    <button onClick={onDownload} className="w-full bg-white text-slate-950 py-5 rounded-2xl font-black uppercase text-[11px] tracking-widest active:scale-95">Download to View</button>
+                  <div className="text-center p-8 sm:p-12 bg-slate-900/80 rounded-[2rem] sm:rounded-[3rem] border border-white/5 max-w-sm text-white shadow-2xl">
+                    <DocumentIcon className="w-16 h-16 sm:w-20 sm:h-20 text-indigo-400 mx-auto mb-4 sm:mb-6" />
+                    <button onClick={onDownload} className="w-full bg-white text-slate-950 py-4 sm:py-5 rounded-xl sm:rounded-2xl font-black uppercase text-[9px] sm:text-[11px] tracking-widest active:scale-95">Download to View</button>
                   </div>
                 )}
               </div>
@@ -817,12 +852,12 @@ function DeleteConfirmModal({ onClose, onConfirm }: any) {
   return (
     <ModalWrapper onClose={onClose}>
        <div className="text-center">
-          <div className="w-20 h-20 bg-rose-50 rounded-3xl flex items-center justify-center mb-8 mx-auto"><ExclamationTriangleIcon className="w-10 h-10 text-rose-600" /></div>
-          <h2 className="text-2xl font-brand font-black mb-4 tracking-tight">Delete Forever?</h2>
-          <p className="text-slate-500 text-sm mb-10 leading-relaxed font-bold">This file will be completely wiped from your secure safe storage.</p>
-          <div className="grid grid-cols-2 gap-4">
-             <button onClick={onClose} className="bg-slate-100 text-slate-600 py-5 rounded-2xl font-black uppercase text-[10px] tracking-widest active:scale-95">Cancel</button>
-             <button onClick={onConfirm} className="bg-rose-600 text-white py-5 rounded-2xl font-black uppercase text-[10px] tracking-widest active:scale-95">Delete</button>
+          <div className="w-16 h-16 sm:w-20 sm:h-20 bg-rose-50 rounded-2xl sm:rounded-3xl flex items-center justify-center mb-6 sm:mb-8 mx-auto"><ExclamationTriangleIcon className="w-8 h-8 sm:w-10 sm:h-10 text-rose-600" /></div>
+          <h2 className="text-xl sm:text-2xl font-brand font-black mb-3 tracking-tight text-center">Delete Forever?</h2>
+          <p className="text-slate-500 text-xs sm:text-sm mb-8 sm:mb-10 leading-relaxed font-bold">This file will be completely wiped from your secure safe storage.</p>
+          <div className="grid grid-cols-2 gap-3 sm:gap-4">
+             <button onClick={onClose} className="bg-slate-100 text-slate-600 py-4 sm:py-5 rounded-xl sm:rounded-2xl font-black uppercase text-[9px] sm:text-[10px] tracking-widest active:scale-95">Cancel</button>
+             <button onClick={onConfirm} className="bg-rose-600 text-white py-4 sm:py-5 rounded-xl sm:rounded-2xl font-black uppercase text-[9px] sm:text-[10px] tracking-widest active:scale-95">Delete</button>
           </div>
        </div>
     </ModalWrapper>
@@ -834,11 +869,11 @@ function RenameModal({ file, onClose, onConfirm }: any) {
     return (
         <ModalWrapper onClose={onClose}>
            <div className="text-center">
-              <h2 className="text-2xl font-brand font-black mb-6 tracking-tight">Rename Item</h2>
-              <input type="text" autoFocus className="w-full bg-slate-100 border-none rounded-2xl py-4 px-6 text-sm font-bold focus:ring-2 focus:ring-indigo-500 outline-none mb-8" value={name} onChange={(e) => setName(e.target.value)} />
-              <div className="grid grid-cols-2 gap-4">
-                 <button onClick={onClose} className="bg-slate-100 text-slate-600 py-5 rounded-2xl font-black uppercase text-[10px] tracking-widest active:scale-95">Cancel</button>
-                 <button onClick={() => onConfirm(name)} className="bg-indigo-600 text-white py-5 rounded-2xl font-black uppercase text-[10px] tracking-widest shadow-xl active:scale-95">Save</button>
+              <h2 className="text-xl sm:text-2xl font-brand font-black mb-6 tracking-tight text-center">Rename Item</h2>
+              <input type="text" autoFocus className="w-full bg-slate-100 border-none rounded-xl sm:rounded-2xl py-3 sm:py-4 px-5 sm:px-6 text-sm font-bold focus:ring-2 focus:ring-indigo-500 outline-none mb-6 sm:mb-8" value={name} onChange={(e) => setName(e.target.value)} />
+              <div className="grid grid-cols-2 gap-3 sm:gap-4">
+                 <button onClick={onClose} className="bg-slate-100 text-slate-600 py-4 sm:py-5 rounded-xl sm:rounded-2xl font-black uppercase text-[9px] sm:text-[10px] tracking-widest active:scale-95">Cancel</button>
+                 <button onClick={() => onConfirm(name)} className="bg-indigo-600 text-white py-4 sm:py-5 rounded-xl sm:rounded-2xl font-black uppercase text-[9px] sm:text-[10px] tracking-widest shadow-xl active:scale-95">Save</button>
               </div>
            </div>
         </ModalWrapper>
@@ -849,20 +884,20 @@ function InstallInstructionModal({ isIOS, onClose }: { isIOS: boolean, onClose: 
   return (
     <ModalWrapper onClose={onClose}>
         <div className="text-center">
-            <div className="w-20 h-20 bg-indigo-50 rounded-3xl flex items-center justify-center mb-8 mx-auto"><DevicePhoneMobileIcon className="w-10 h-10 text-indigo-600" /></div>
-            <h2 className="text-3xl font-brand font-black mb-4 tracking-tight">Install Infinity</h2>
-            <p className="text-slate-500 text-sm mb-10 font-bold leading-relaxed">Pin to home screen to use it as your default device storage.</p>
-            <div className="space-y-8 text-left">
-               <div className="flex gap-4 items-start">
-                  <div className="w-10 h-10 rounded-xl bg-slate-900 text-white flex items-center justify-center font-black flex-shrink-0 font-brand">1</div>
-                  <p className="text-xs text-slate-600 mt-2 font-bold leading-tight">Tap the <ShareIcon className="w-4 h-4 inline text-indigo-600 mx-1" /> icon in Safari/Chrome toolbar.</p>
+            <div className="w-16 h-16 sm:w-20 sm:h-20 bg-indigo-50 rounded-2xl sm:rounded-3xl flex items-center justify-center mb-6 sm:mb-8 mx-auto"><DevicePhoneMobileIcon className="w-8 h-8 sm:w-10 sm:h-10 text-indigo-600" /></div>
+            <h2 className="text-2xl sm:text-3xl font-brand font-black mb-4 tracking-tight text-center">Install Infinity</h2>
+            <p className="text-slate-500 text-xs sm:text-sm mb-8 font-bold leading-relaxed">Pin to home screen to use it as your default device storage.</p>
+            <div className="space-y-6 sm:space-y-8 text-left">
+               <div className="flex gap-3 sm:gap-4 items-start">
+                  <div className="w-8 h-8 sm:w-10 sm:h-10 rounded-lg sm:rounded-xl bg-slate-900 text-white flex items-center justify-center font-black flex-shrink-0 font-brand">1</div>
+                  <p className="text-[10px] sm:text-xs text-slate-600 mt-1.5 sm:mt-2 font-bold leading-tight">Tap the <ShareIcon className="w-3.5 h-3.5 inline text-indigo-600 mx-1" /> icon in Safari/Chrome toolbar.</p>
                </div>
-               <div className="flex gap-4 items-start">
-                  <div className="w-10 h-10 rounded-xl bg-indigo-600 text-white flex items-center justify-center font-black flex-shrink-0 font-brand">2</div>
-                  <p className="text-xs text-slate-600 mt-2 font-bold leading-tight">Choose <span className="text-indigo-600">"Add to Home Screen"</span> from the list.</p>
+               <div className="flex gap-3 sm:gap-4 items-start">
+                  <div className="w-8 h-8 sm:w-10 sm:h-10 rounded-lg sm:rounded-xl bg-indigo-600 text-white flex items-center justify-center font-black flex-shrink-0 font-brand">2</div>
+                  <p className="text-[10px] sm:text-xs text-slate-600 mt-1.5 sm:mt-2 font-bold leading-tight">Choose <span className="text-indigo-600">"Add to Home Screen"</span> from the list.</p>
                </div>
             </div>
-            <button onClick={onClose} className="w-full mt-10 bg-slate-950 text-white py-5 rounded-2xl font-black uppercase text-xs font-brand active:scale-95 transition-all">Got it</button>
+            <button onClick={onClose} className="w-full mt-8 sm:mt-10 bg-slate-950 text-white py-4 sm:py-5 rounded-xl sm:rounded-2xl font-black uppercase text-[10px] sm:text-xs font-brand active:scale-95 transition-all">Got it</button>
         </div>
     </ModalWrapper>
   );
