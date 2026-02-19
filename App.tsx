@@ -1,6 +1,6 @@
 
 import React, { useState, useEffect, useMemo, useRef } from 'react';
-import { StoredFile, FileType, StorageStats, VaultBackup, VaultProfile } from './types';
+import { StoredFile, FileType, StorageStats, VaultBackup, VaultProfile } from './types.ts';
 import { 
   saveFile, 
   deleteFile, 
@@ -13,8 +13,8 @@ import {
   importFullBackup,
   deleteVaultProfile,
   updateFile
-} from './services/storageService';
-import { encryptFile, decryptFile } from './services/cryptoService';
+} from './services/storageService.ts';
+import { encryptFile, decryptFile } from './services/cryptoService.ts';
 import { 
   FolderIcon, 
   PhotoIcon, 
@@ -149,7 +149,7 @@ export default function App() {
       link.click();
       URL.revokeObjectURL(url);
     } catch (err) {
-      alert('Export failed. Storage access may be restricted.');
+      alert('Export failed.');
     } finally {
       setIsProcessing(false);
     }
@@ -166,7 +166,7 @@ export default function App() {
       alert('Import successful.');
       if (isUnlocked) await loadFiles();
     } catch (err) {
-      alert('Import failed. Invalid or corrupted vault file.');
+      alert('Import failed. Invalid format.');
     } finally {
       setIsProcessing(false);
     }
@@ -234,7 +234,7 @@ export default function App() {
       setIsUnlocked(true);
       setFiles([]);
     } catch (err) {
-      setError('Vault initialization failed.');
+      setError('Initialization failed.');
     } finally {
       setIsProcessing(false);
     }
@@ -247,7 +247,7 @@ export default function App() {
       if (videoRef.current) videoRef.current.srcObject = stream;
     } catch (err) {
       setShowCamera(false);
-      alert("Please allow camera access in your device settings.");
+      alert("Please allow camera access.");
     }
   };
 
@@ -284,8 +284,8 @@ export default function App() {
       });
       stopCamera();
       await loadFiles();
-    } catch(e) {
-      alert("Could not save photo. Check storage space.");
+    } catch (e) {
+      alert("Storage error during capture.");
     } finally {
       setIsProcessing(false);
     }
@@ -317,8 +317,6 @@ export default function App() {
         });
       }
       await loadFiles();
-    } catch(e) {
-      alert("Failed to secure some files. Storage may be full.");
     } finally {
       setIsProcessing(false);
     }
@@ -333,8 +331,6 @@ export default function App() {
       setFiles(prev => prev.filter(f => f.id !== id));
       await updateQuota();
       setFileToDelete(null);
-    } catch (err) {
-      alert("Error: Failed to delete file.");
     } finally {
       setIsProcessing(false);
     }
@@ -348,8 +344,6 @@ export default function App() {
       await updateFile(updated);
       setFiles(prev => prev.map(f => f.id === updated.id ? updated : f));
       setFileToRename(null);
-    } catch (err) {
-      alert("Rename failed.");
     } finally {
       setIsProcessing(false);
     }
@@ -365,15 +359,13 @@ export default function App() {
       link.download = file.name;
       link.click();
       URL.revokeObjectURL(url);
-    } catch(e) {
-      alert("Failed to decrypt file.");
     } finally {
       setIsProcessing(false);
     }
   };
 
   const handleDownloadAll = async () => {
-    if (!confirm(`Restore all ${files.length} items to your device?`)) return;
+    if (!confirm(`Restore all ${files.length} items?`)) return;
     setIsProcessing(true);
     try {
       for (const file of files) {
@@ -384,9 +376,9 @@ export default function App() {
         link.download = file.name;
         link.click();
         URL.revokeObjectURL(url);
-        await new Promise(r => setTimeout(r, 800)); // Staggered to avoid browser lockup
+        await new Promise(r => setTimeout(r, 800));
       }
-      alert("Restoration complete.");
+      alert("All files restored.");
     } finally {
       setIsProcessing(false);
     }
@@ -407,8 +399,8 @@ export default function App() {
 
   if (!isUnlocked) {
     return (
-      <div className="min-h-screen bg-slate-950 flex flex-col items-center justify-center p-6 text-white font-sans">
-        <div className="w-full max-sm:px-0 max-w-sm bg-slate-900 border border-slate-800 rounded-[3rem] p-10 shadow-2xl relative">
+      <div className="min-h-screen bg-slate-950 flex flex-col items-center justify-start sm:justify-center p-6 text-white font-sans overflow-y-auto">
+        <div className="w-full max-w-sm bg-slate-900 border border-slate-800 rounded-[3rem] p-10 shadow-2xl relative my-auto">
           <div className="flex justify-center mb-6">
             <InfinityLogo className="w-20 h-20 text-indigo-400" />
           </div>
@@ -432,7 +424,7 @@ export default function App() {
             </label>
           </div>
         </div>
-        <div className="mt-8 w-full max-w-sm">
+        <div className="mt-8 mb-8 w-full max-w-sm">
            <button onClick={handleInstallApp} className="w-full flex items-center justify-between p-6 bg-white/5 border border-white/10 rounded-3xl hover:bg-white/10 transition-all text-white group">
               <div className="flex items-center gap-4">
                  <DevicePhoneMobileIcon className="w-6 h-6 text-indigo-400" />
@@ -467,6 +459,7 @@ export default function App() {
           </nav>
 
           <div className="space-y-4">
+             {/* Storage Card: Sidebar only */}
              <div className="bg-slate-900 text-white p-7 rounded-[2.5rem] shadow-2xl relative overflow-hidden group">
                 <div className="absolute top-0 right-0 p-4 opacity-10 group-hover:opacity-100 transition-opacity"><CircleStackIcon className="w-12 h-12" /></div>
                 <div className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Local Capacity</div>
@@ -502,9 +495,9 @@ export default function App() {
         </div>
       </aside>
 
-      <main className="flex-1 flex flex-col min-w-0 bg-slate-50 pb-20 lg:pb-0 relative overflow-hidden">
-        <header className="h-24 px-6 lg:px-12 flex items-center justify-between border-b border-slate-200 bg-white sticky top-0 z-40 gap-4">
-          <div className="flex items-center gap-5 flex-shrink-0">
+      <main className="flex-1 flex flex-col min-w-0 bg-slate-50 relative overflow-hidden">
+        <header className="header-safe h-auto min-h-[5rem] px-6 lg:px-12 py-4 flex items-center justify-between border-b border-slate-200 bg-white sticky top-0 z-40 gap-4">
+          <div className="flex items-center gap-3 flex-shrink-0">
              <div className="bg-slate-900 p-2 rounded-xl lg:hidden"><InfinityLogo className="w-8 h-8 text-white" /></div>
              <div className="hidden sm:block">
                 <h2 className="font-brand font-black text-3xl tracking-tight">infinity</h2>
@@ -526,14 +519,14 @@ export default function App() {
           <div className="flex items-center gap-3 flex-shrink-0">
             {isProcessing && <ArrowPathIcon className="w-6 h-6 animate-spin text-indigo-600" />}
             <button onClick={startCamera} title="Camera Snap" className="p-3 bg-slate-100 rounded-2xl transition-all hover:bg-slate-200 active:scale-95"><CameraIcon className="w-6 h-6 text-slate-600" /></button>
-            <label title="Upload Files" className="bg-indigo-600 text-white font-black p-3 sm:px-6 sm:py-4 rounded-2xl cursor-pointer shadow-xl shadow-indigo-600/20 flex items-center gap-3 text-sm hover:bg-indigo-700 transition-all active:scale-95">
-              <CloudArrowUpIcon className="w-6 h-6" /> <span className="hidden sm:inline">Add</span>
+            <label title="Upload Files" className="bg-indigo-600 text-white font-black p-3 lg:px-6 lg:py-4 rounded-2xl cursor-pointer shadow-xl shadow-indigo-600/20 flex items-center gap-3 text-sm hover:bg-indigo-700 transition-all active:scale-95">
+              <CloudArrowUpIcon className="w-6 h-6" /> <span className="hidden lg:inline">Add</span>
               <input type="file" multiple onChange={handleFileUpload} className="hidden" />
             </label>
           </div>
         </header>
 
-        <div className="flex-1 overflow-y-auto p-6 lg:p-12 scrollbar-hide">
+        <div className="flex-1 overflow-y-auto p-6 lg:p-12 scrollbar-hide pb-32">
           {filteredAndSortedFiles.length === 0 ? (
             <div className="h-full flex flex-col items-center justify-center text-slate-300">
               <div className="p-10 bg-white rounded-[4rem] border border-slate-100 shadow-sm flex flex-col items-center max-w-xs text-center">
@@ -544,7 +537,7 @@ export default function App() {
               </div>
             </div>
           ) : (
-            <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4 gap-8 pb-10">
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4 gap-8">
               {filteredAndSortedFiles.map(file => (
                 <FileCard 
                   key={file.id} 
@@ -561,7 +554,7 @@ export default function App() {
           )}
         </div>
 
-        <nav className="lg:hidden fixed bottom-0 inset-x-0 h-20 bg-white/95 backdrop-blur-xl border-t border-slate-200 flex items-center justify-around px-6 z-40">
+        <nav className="mobile-nav lg:hidden fixed bottom-0 inset-x-0 h-20 bg-white/95 backdrop-blur-xl border-t border-slate-200 flex items-center justify-around px-6 z-40">
             <MobileNavItem icon={<FolderIcon />} active={filter === 'all'} onClick={() => setFilter('all')} />
             <MobileNavItem icon={<PhotoIcon />} active={filter === 'image'} onClick={() => setFilter('image')} />
             <MobileNavItem icon={<VideoCameraIcon />} active={filter === 'video'} onClick={() => setFilter('video')} />
@@ -585,7 +578,7 @@ function CameraLens({ videoRef, onCapture, isProcessing, onClose }: any) {
   return (
     <div className="fixed inset-0 bg-slate-950 z-[500] flex flex-col items-center justify-center animate-in fade-in duration-300">
       <video ref={videoRef} autoPlay playsInline className="w-full h-full object-cover" />
-      <div className="absolute inset-x-0 bottom-0 h-40 bg-gradient-to-t from-black/80 to-transparent flex items-center justify-center gap-10 pb-8">
+      <div className="absolute inset-x-0 bottom-0 h-40 bg-gradient-to-t from-black/80 to-transparent flex items-center justify-center gap-10 pb-12">
         <button onClick={onClose} className="p-5 bg-white/10 text-white rounded-full backdrop-blur-xl border border-white/20 active:scale-95 transition-all"><XMarkIcon className="w-8 h-8" /></button>
         <button onClick={onCapture} disabled={isProcessing} className="w-24 h-24 bg-white rounded-full flex items-center justify-center shadow-2xl active:scale-90 transition-all border-8 border-slate-200">
           {isProcessing ? <ArrowPathIcon className="w-10 h-10 text-indigo-600 animate-spin" /> : <div className="w-16 h-16 rounded-full border-4 border-slate-900" />}
@@ -611,11 +604,7 @@ function FileCard({ file, vaultPin, onDelete, onDownload, onPreview, onRename, i
   }, [file.id, vaultPin]);
 
   const formatDate = (timestamp: number) => {
-    return new Intl.DateTimeFormat('en-US', { 
-      month: 'short', 
-      day: 'numeric', 
-      year: 'numeric' 
-    }).format(new Date(timestamp));
+    return new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric', year: 'numeric' }).format(new Date(timestamp));
   };
 
   const formatSize = (bytes: number) => {
@@ -630,7 +619,7 @@ function FileCard({ file, vaultPin, onDelete, onDownload, onPreview, onRename, i
     <div className={`group bg-white rounded-[3rem] border border-slate-200 overflow-hidden shadow-sm hover:shadow-2xl transition-all duration-500 flex flex-col ${isProcessing ? 'opacity-50 pointer-events-none' : ''}`}>
       <div onClick={onPreview} className="aspect-[5/4] bg-slate-100 relative flex items-center justify-center overflow-hidden cursor-pointer group/card">
         {file.type === 'image' && thumbnailUrl ? (
-          <img src={thumbnailUrl} alt={file.name} className="w-full h-full object-cover transition-transform duration-1000 group-hover/card:scale-110" />
+          <img src={thumbnailUrl} alt={file.name} className="w-full h-full object-cover transition-transform duration-1000 lg:group-hover/card:scale-110" />
         ) : file.type === 'video' ? (
           <div className="relative w-full h-full flex items-center justify-center bg-indigo-50">
              <VideoCameraIcon className="w-16 h-16 text-indigo-200" />
@@ -641,15 +630,15 @@ function FileCard({ file, vaultPin, onDelete, onDownload, onPreview, onRename, i
              <DocumentIcon className="w-16 h-16" />
           </div>
         )}
-        <div className="absolute inset-0 bg-slate-950/70 opacity-0 group-hover/card:opacity-100 transition-opacity hidden lg:flex items-center justify-center gap-3 backdrop-blur-sm pointer-events-auto">
-          <button onClick={(e) => { e.stopPropagation(); onPreview(); }} title="Preview" className="p-3 bg-white rounded-2xl text-slate-900 hover:scale-110 active:scale-95 transition-transform"><ArrowsPointingOutIcon className="w-5 h-5" /></button>
-          <button onClick={(e) => { e.stopPropagation(); onRename(); }} title="Rename" className="p-3 bg-white rounded-2xl text-slate-900 hover:scale-110 active:scale-95 transition-transform"><PencilSquareIcon className="w-5 h-5" /></button>
-          <button onClick={(e) => { e.stopPropagation(); onDownload(); }} title="Download" className="p-3 bg-emerald-500 rounded-2xl text-white hover:scale-110 active:scale-95 transition-transform"><ArrowDownTrayIcon className="w-5 h-5" /></button>
-          <button onClick={(e) => { e.stopPropagation(); onDelete(); }} title="Delete" className="p-3 bg-rose-500 rounded-2xl text-white hover:scale-110 active:scale-95 transition-transform"><TrashIcon className="w-5 h-5" /></button>
+        <div className="absolute inset-0 bg-slate-950/70 opacity-0 lg:group-hover/card:opacity-100 transition-opacity hidden lg:flex items-center justify-center gap-3 backdrop-blur-sm pointer-events-auto">
+          <button onClick={(e) => { e.stopPropagation(); onPreview(); }} className="p-3 bg-white rounded-2xl text-slate-900 hover:scale-110 active:scale-95 transition-transform"><ArrowsPointingOutIcon className="w-5 h-5" /></button>
+          <button onClick={(e) => { e.stopPropagation(); onRename(); }} className="p-3 bg-white rounded-2xl text-slate-900 hover:scale-110 active:scale-95 transition-transform"><PencilSquareIcon className="w-5 h-5" /></button>
+          <button onClick={(e) => { e.stopPropagation(); onDownload(); }} className="p-3 bg-emerald-500 rounded-2xl text-white hover:scale-110 active:scale-95 transition-transform"><ArrowDownTrayIcon className="w-5 h-5" /></button>
+          <button onClick={(e) => { e.stopPropagation(); onDelete(); }} className="p-3 bg-rose-500 rounded-2xl text-white hover:scale-110 active:scale-95 transition-transform"><TrashIcon className="w-5 h-5" /></button>
         </div>
       </div>
       <div className="p-6 flex-1 flex flex-col">
-        <h3 className="text-sm font-black text-slate-800 truncate mb-1 group-hover/card:text-indigo-600 transition-colors">{file.name}</h3>
+        <h3 className="text-sm font-black text-slate-800 truncate mb-1 lg:group-hover/card:text-indigo-600 transition-colors">{file.name}</h3>
         
         <div className="flex flex-col gap-1 mb-4">
            <div className="flex justify-between items-center text-[10px] text-slate-400 font-bold uppercase tracking-widest">
@@ -680,36 +669,99 @@ function FileCard({ file, vaultPin, onDelete, onDownload, onPreview, onRename, i
   );
 }
 
-function RenameModal({ file, onClose, onConfirm }: any) {
-    const [name, setName] = useState(file.name);
+function MobileNavItem({ icon, active, onClick }: any) {
+  return (
+    <button onClick={onClick} className={`p-4 rounded-2xl transition-all active:scale-90 ${active ? 'text-indigo-600 bg-indigo-50 shadow-sm' : 'text-slate-400'}`}>
+      {React.cloneElement(icon, { className: "w-6 h-6" })}
+    </button>
+  );
+}
+
+function SidebarItem({ icon, label, active, onClick }: any) {
+  return (
+    <button onClick={onClick} className={`w-full flex items-center gap-5 px-6 py-4 rounded-2xl text-[14px] font-bold transition-all ${active ? 'bg-slate-900 text-white shadow-xl shadow-slate-900/10' : 'text-slate-400 hover:bg-slate-100 hover:text-slate-600'}`}>
+      {React.cloneElement(icon, { className: "w-6 h-6 flex-shrink-0" })}
+      <span className="tracking-tight">{label}</span>
+    </button>
+  );
+}
+
+function ModalWrapper({ children, onClose }: { children?: React.ReactNode, onClose: () => void }) {
     return (
-        <div className="fixed inset-0 bg-slate-950/90 z-[400] flex items-center justify-center p-6 backdrop-blur-xl animate-in fade-in zoom-in-95 duration-200">
-           <div className="bg-white rounded-[3rem] w-full max-w-sm p-10 shadow-2xl relative text-slate-900 text-center">
-              <h2 className="text-2xl font-brand font-black mb-6 tracking-tight">Rename File</h2>
-              <input type="text" autoFocus className="w-full bg-slate-100 border-none rounded-2xl py-4 px-6 text-sm font-bold focus:ring-2 focus:ring-indigo-500 outline-none mb-8" value={name} onChange={(e) => setName(e.target.value)} />
-              <div className="grid grid-cols-2 gap-4">
-                 <button onClick={onClose} className="bg-slate-100 text-slate-600 py-4 rounded-2xl font-black uppercase text-[10px] tracking-widest active:scale-95 transition-all">Cancel</button>
-                 <button onClick={() => onConfirm(name)} className="bg-indigo-600 text-white py-4 rounded-2xl font-black uppercase text-[10px] tracking-widest shadow-xl active:scale-95 transition-all">Save</button>
-              </div>
-           </div>
+        <div className="fixed inset-0 bg-slate-950/90 z-[500] flex items-center justify-center p-6 backdrop-blur-xl animate-in fade-in duration-300">
+            <div className="bg-white rounded-[3rem] w-full max-w-md p-10 shadow-2xl relative text-slate-900 border-t-8 border-indigo-600 animate-in zoom-in-95 duration-300 max-h-[90vh] overflow-y-auto">
+                <button onClick={onClose} className="absolute top-6 right-6 p-2 text-slate-400 hover:text-slate-900 transition-colors"><XMarkIcon className="w-7 h-7" /></button>
+                {children}
+            </div>
         </div>
     );
 }
 
-function DeleteConfirmModal({ onClose, onConfirm }: any) {
-  return (
-    <div className="fixed inset-0 bg-slate-950/90 z-[400] flex items-center justify-center p-6 backdrop-blur-xl animate-in fade-in zoom-in-95 duration-200">
-       <div className="bg-white rounded-[3rem] w-full max-w-sm p-10 shadow-2xl relative text-slate-900 border-t-8 border-rose-500 text-center">
-          <div className="w-20 h-20 bg-rose-50 rounded-3xl flex items-center justify-center mb-8 mx-auto"><ExclamationTriangleIcon className="w-10 h-10 text-rose-600" /></div>
-          <h2 className="text-2xl font-brand font-black mb-4 tracking-tight">Delete Forever?</h2>
-          <p className="text-slate-500 text-sm mb-10 leading-relaxed font-bold">This file will be completely wiped from your secure safe.</p>
-          <div className="grid grid-cols-2 gap-4">
-             <button onClick={onClose} className="bg-slate-100 text-slate-600 py-5 rounded-2xl font-black uppercase text-[10px] tracking-widest active:scale-95 transition-all">Cancel</button>
-             <button onClick={onConfirm} className="bg-rose-600 text-white py-5 rounded-2xl font-black uppercase text-[10px] tracking-widest active:scale-95 transition-all">Delete</button>
-          </div>
-       </div>
-    </div>
-  );
+function InfoModal({ stats, onClose }: any) {
+    return (
+        <ModalWrapper onClose={onClose}>
+            <div className="text-center">
+                <div className="w-20 h-20 bg-emerald-50 rounded-3xl flex items-center justify-center mb-8 mx-auto"><CheckBadgeIcon className="w-10 h-10 text-emerald-600" /></div>
+                <h2 className="text-4xl font-brand font-black mb-6 tracking-tight">vault stats</h2>
+                <div className="bg-slate-50 p-6 rounded-[2rem] mb-6">
+                    <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Total Space Saved</p>
+                    <p className="text-4xl font-black text-emerald-600">{formatSize(stats.saved)}</p>
+                </div>
+                <button onClick={onClose} className="w-full bg-slate-900 text-white py-5 rounded-2xl font-black uppercase text-xs tracking-widest active:scale-95 transition-all">Understood</button>
+            </div>
+        </ModalWrapper>
+    );
+}
+
+function MaintenanceModal({ files, handleDownloadAll, handleInstallApp, handleExport, handleImport, deleteVaultProfile, activeProfile, handleLockVault, onClose, isProcessing, setIsProcessing }: any) {
+    const handleWipe = async () => {
+        if(confirm('⚠️ Permanent wipe: proceed?')) {
+            setIsProcessing(true);
+            try { await deleteVaultProfile(activeProfile!.id); handleLockVault(); } catch(e) { alert('Error.'); } finally { setIsProcessing(false); }
+        }
+    };
+    return (
+        <div className="fixed inset-0 bg-slate-900/90 backdrop-blur-xl z-[100] flex items-center justify-center p-6 animate-in zoom-in-95 duration-300">
+            <div className="bg-white rounded-[3rem] w-full max-w-lg p-10 shadow-2xl relative text-slate-900 max-h-[90vh] overflow-y-auto scrollbar-hide">
+                <button onClick={onClose} className="absolute top-6 right-6 p-2 text-slate-400 hover:text-slate-900"><XMarkIcon className="w-7 h-7" /></button>
+                <h2 className="text-4xl font-brand font-black mb-8 tracking-tight">vault control</h2>
+                <div className="space-y-4">
+                    <button onClick={handleDownloadAll} disabled={files.length === 0 || isProcessing} className="w-full flex items-center justify-between p-7 bg-emerald-600 text-white rounded-[2rem] shadow-xl active:scale-95 transition-all">
+                       <div className="flex items-center gap-5">
+                          <ArrowDownCircleIcon className="w-8 h-8" />
+                          <div className="text-left"><p className="text-sm font-black font-brand">Restore Everything</p></div>
+                       </div>
+                       <span className="font-brand font-black text-2xl">{files.length}</span>
+                    </button>
+                    
+                    <button onClick={handleInstallApp} className="w-full flex items-center justify-between p-6 bg-indigo-50 border border-indigo-100 rounded-[2rem] hover:bg-indigo-100 transition-all text-indigo-600 shadow-sm active:scale-95">
+                        <div className="flex items-center gap-5">
+                            <DevicePhoneMobileIcon className="w-8 h-8" />
+                            <p className="text-sm font-black font-brand">Shortcut Guide</p>
+                        </div>
+                        <ArrowDownTrayIcon className="w-6 h-6" />
+                    </button>
+
+                    <div className="grid grid-cols-2 gap-4">
+                        <button onClick={handleExport} className="flex flex-col items-center gap-2 p-6 bg-slate-100 rounded-[2rem] hover:bg-slate-200 active:scale-95 transition-all">
+                            <ArrowUpOnSquareIcon className="w-8 h-8 text-indigo-600" />
+                            <span className="text-[10px] font-black uppercase tracking-widest">Backup</span>
+                        </button>
+                        <label className="flex flex-col items-center gap-2 p-6 bg-slate-100 rounded-[2rem] hover:bg-slate-200 active:scale-95 cursor-pointer transition-all">
+                            <ArrowDownOnSquareIcon className="w-8 h-8 text-indigo-600" />
+                            <span className="text-[10px] font-black uppercase tracking-widest">Restore</span>
+                            <input type="file" onChange={handleImport} className="hidden" accept=".vault" />
+                        </label>
+                    </div>
+
+                    <button onClick={handleWipe} className="w-full flex items-center gap-3 justify-center text-rose-500 font-black uppercase text-[10px] tracking-widest pt-6 border-t mt-4 active:scale-95 transition-all">
+                        <TrashIcon className="w-4 h-4" /> Permanent Reset
+                    </button>
+                </div>
+                <button onClick={onClose} className="w-full mt-10 bg-slate-950 text-white py-5 rounded-2xl font-black uppercase text-xs font-brand active:scale-95">Close Settings</button>
+            </div>
+        </div>
+    );
 }
 
 function PreviewModal({ file, vaultPin, onClose, onDownload }: any) {
@@ -723,13 +775,12 @@ function PreviewModal({ file, vaultPin, onClose, onDownload }: any) {
         url = URL.createObjectURL(new Blob([decrypted], { type: file.mimeType }));
         setDataUrl(url);
       })
-      .catch(err => alert("Decryption failed. Check your security key."))
       .finally(() => setIsDecrypting(false));
     return () => { if (url) URL.revokeObjectURL(url); };
   }, [file.id, vaultPin]);
 
   return (
-    <div className="fixed inset-0 bg-slate-950/95 z-[150] flex flex-col items-center justify-center p-4 md:p-10 animate-in fade-in duration-300 backdrop-blur-2xl">
+    <div className="fixed inset-0 bg-slate-950/95 z-[500] flex flex-col items-center justify-center p-6 sm:p-10 animate-in fade-in duration-300 backdrop-blur-xl">
       <div className="w-full h-full max-w-7xl flex flex-col bg-slate-900/40 rounded-[3rem] border border-white/5 overflow-hidden shadow-2xl">
         <div className="px-8 py-6 flex justify-between items-center bg-slate-900/80 border-b border-white/5 z-20">
             <h2 className="text-sm font-black text-white truncate max-w-[50%]">{file.name}</h2>
@@ -742,7 +793,7 @@ function PreviewModal({ file, vaultPin, onClose, onDownload }: any) {
             {isDecrypting ? (
                 <div className="flex flex-col items-center gap-6">
                    <ArrowPathIcon className="w-12 h-12 text-indigo-500 animate-spin" />
-                   <p className="text-[10px] font-black uppercase tracking-[0.5em] text-indigo-500">Accessing Vault...</p>
+                   <p className="text-[10px] font-black uppercase tracking-[0.5em] text-indigo-500">Unlocking Safe...</p>
                 </div>
             ) : (
               <div className="w-full h-full flex items-center justify-center">
@@ -762,143 +813,58 @@ function PreviewModal({ file, vaultPin, onClose, onDownload }: any) {
   );
 }
 
-function SidebarItem({ icon, label, active, onClick }: any) {
+function DeleteConfirmModal({ onClose, onConfirm }: any) {
   return (
-    <button onClick={onClick} className={`w-full flex items-center gap-5 px-6 py-4 rounded-2xl text-[14px] font-bold transition-all ${active ? 'bg-slate-900 text-white shadow-xl shadow-slate-900/10' : 'text-slate-400 hover:bg-slate-100 hover:text-slate-600'}`}>
-      {React.cloneElement(icon, { className: "w-6 h-6 flex-shrink-0" })}
-      <span className="tracking-tight">{label}</span>
-    </button>
+    <ModalWrapper onClose={onClose}>
+       <div className="text-center">
+          <div className="w-20 h-20 bg-rose-50 rounded-3xl flex items-center justify-center mb-8 mx-auto"><ExclamationTriangleIcon className="w-10 h-10 text-rose-600" /></div>
+          <h2 className="text-2xl font-brand font-black mb-4 tracking-tight">Delete Forever?</h2>
+          <p className="text-slate-500 text-sm mb-10 leading-relaxed font-bold">This file will be completely wiped from your secure safe storage.</p>
+          <div className="grid grid-cols-2 gap-4">
+             <button onClick={onClose} className="bg-slate-100 text-slate-600 py-5 rounded-2xl font-black uppercase text-[10px] tracking-widest active:scale-95">Cancel</button>
+             <button onClick={onConfirm} className="bg-rose-600 text-white py-5 rounded-2xl font-black uppercase text-[10px] tracking-widest active:scale-95">Delete</button>
+          </div>
+       </div>
+    </ModalWrapper>
   );
 }
 
-function MobileNavItem({ icon, active, onClick }: any) {
-  return (
-    <button onClick={onClick} className={`p-4 rounded-2xl transition-all ${active ? 'text-indigo-600 bg-indigo-50 shadow-sm' : 'text-slate-400'}`}>
-      {React.cloneElement(icon, { className: "w-6 h-6" })}
-    </button>
-  );
-}
-
-function InfoModal({ stats, onClose }: any) {
-    const formatSize = (bytes: number) => {
-        if (bytes === 0) return '0 B';
-        const i = Math.floor(Math.log(bytes) / Math.log(1024));
-        return parseFloat((bytes / Math.pow(1024, i)).toFixed(1)) + ' ' + ['B', 'KB', 'MB', 'GB'][i];
-    };
+function RenameModal({ file, onClose, onConfirm }: any) {
+    const [name, setName] = useState(file.name);
     return (
-        <div className="fixed inset-0 bg-slate-900/90 backdrop-blur-xl z-[100] flex items-center justify-center p-6 animate-in fade-in duration-300">
-            <div className="bg-white rounded-[3rem] w-full max-md:p-8 max-w-md p-10 shadow-2xl relative text-center text-slate-900">
-                <button onClick={onClose} className="absolute top-6 right-6 p-2 text-slate-400 hover:text-slate-900"><XMarkIcon className="w-7 h-7" /></button>
-                <div className="w-20 h-20 bg-emerald-50 rounded-3xl flex items-center justify-center mb-8 mx-auto"><CheckBadgeIcon className="w-10 h-10 text-emerald-600" /></div>
-                <h2 className="text-4xl font-brand font-black mb-6 tracking-tight">vault stats</h2>
-                <div className="bg-slate-50 p-6 rounded-[2rem] mb-6">
-                    <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Local Space Optimized</p>
-                    <p className="text-4xl font-black text-emerald-600">{formatSize(stats.saved)}</p>
-                </div>
-                <div className="text-[10px] text-slate-400 font-bold uppercase mb-8">All files are encrypted on-device.</div>
-                <button onClick={onClose} className="w-full bg-slate-900 text-white py-5 rounded-2xl font-black uppercase text-xs font-brand">Dismiss</button>
-            </div>
-        </div>
-    );
-}
-
-function MaintenanceModal({ files, handleDownloadAll, handleInstallApp, handleExport, handleImport, deleteVaultProfile, activeProfile, handleLockVault, onClose, isProcessing, setIsProcessing }: any) {
-    const handleWipeData = async () => {
-        if(confirm('⚠️ PERMANENT WIPE: This will delete everything in this safe. Proceed?')) {
-            setIsProcessing(true);
-            try {
-                await deleteVaultProfile(activeProfile!.id);
-                alert('Safe wiped successfully.');
-                handleLockVault();
-            } catch (err) {
-                alert('Error wiping safe.');
-            } finally {
-                setIsProcessing(false);
-            }
-        }
-    };
-    return (
-        <div className="fixed inset-0 bg-slate-900/90 backdrop-blur-xl z-[100] flex items-center justify-center p-6 animate-in zoom-in-95 duration-300">
-            <div className="bg-white rounded-[3rem] w-full max-w-lg p-10 shadow-2xl relative text-slate-900">
-                <button onClick={onClose} className="absolute top-6 right-6 p-2 text-slate-400 hover:text-slate-900"><XMarkIcon className="w-7 h-7" /></button>
-                <h2 className="text-4xl font-brand font-black mb-8 tracking-tight">vault control</h2>
-                <div className="space-y-4">
-                    <button onClick={handleDownloadAll} disabled={files.length === 0 || isProcessing} className="w-full flex items-center justify-between p-7 bg-emerald-600 text-white rounded-[2rem] shadow-xl shadow-emerald-600/20 active:scale-95 transition-all">
-                       <div className="flex items-center gap-5">
-                          <ArrowDownCircleIcon className="w-8 h-8" />
-                          <div className="text-left"><p className="text-sm font-black font-brand">Restore Everything</p></div>
-                       </div>
-                       <span className="font-brand font-black text-2xl">{files.length}</span>
-                    </button>
-                    
-                    <button onClick={handleInstallApp} className="w-full flex items-center justify-between p-6 bg-indigo-50 border border-indigo-100 rounded-[2rem] hover:bg-indigo-100 transition-all text-indigo-600 shadow-sm active:scale-95">
-                        <div className="flex items-center gap-5">
-                            <DevicePhoneMobileIcon className="w-8 h-8" />
-                            <p className="text-sm font-black font-brand">Shortcut Guide</p>
-                        </div>
-                        <ArrowDownTrayIcon className="w-6 h-6" />
-                    </button>
-
-                    <div className="grid grid-cols-2 gap-4">
-                        <button onClick={handleExport} disabled={isProcessing} className="flex flex-col items-center gap-2 p-6 bg-slate-100 rounded-[2rem] hover:bg-slate-200 active:scale-95 transition-all">
-                            <ArrowUpOnSquareIcon className="w-8 h-8 text-indigo-600" />
-                            <span className="text-[10px] font-black uppercase tracking-widest">Backup Vault</span>
-                        </button>
-                        <label className="flex flex-col items-center gap-2 p-6 bg-slate-100 rounded-[2rem] hover:bg-slate-200 active:scale-95 cursor-pointer transition-all">
-                            <ArrowDownOnSquareIcon className="w-8 h-8 text-indigo-600" />
-                            <span className="text-[10px] font-black uppercase tracking-widest">Restore Vault</span>
-                            <input type="file" onChange={handleImport} className="hidden" accept=".vault" />
-                        </label>
-                    </div>
-
-                    <button onClick={handleWipeData} disabled={isProcessing} className="w-full flex items-center gap-3 justify-center text-rose-500 font-black uppercase text-[10px] tracking-widest pt-6 border-t mt-4">
-                        <TrashIcon className="w-4 h-4" /> Permanent Reset
-                    </button>
-                </div>
-                <button onClick={onClose} className="w-full mt-10 bg-slate-950 text-white py-5 rounded-2xl font-black uppercase text-xs font-brand">Close</button>
-            </div>
-        </div>
+        <ModalWrapper onClose={onClose}>
+           <div className="text-center">
+              <h2 className="text-2xl font-brand font-black mb-6 tracking-tight">Rename Item</h2>
+              <input type="text" autoFocus className="w-full bg-slate-100 border-none rounded-2xl py-4 px-6 text-sm font-bold focus:ring-2 focus:ring-indigo-500 outline-none mb-8" value={name} onChange={(e) => setName(e.target.value)} />
+              <div className="grid grid-cols-2 gap-4">
+                 <button onClick={onClose} className="bg-slate-100 text-slate-600 py-5 rounded-2xl font-black uppercase text-[10px] tracking-widest active:scale-95">Cancel</button>
+                 <button onClick={() => onConfirm(name)} className="bg-indigo-600 text-white py-5 rounded-2xl font-black uppercase text-[10px] tracking-widest shadow-xl active:scale-95">Save</button>
+              </div>
+           </div>
+        </ModalWrapper>
     );
 }
 
 function InstallInstructionModal({ isIOS, onClose }: { isIOS: boolean, onClose: () => void }) {
   return (
-    <div className="fixed inset-0 bg-slate-950/90 z-[600] flex items-center justify-center p-6 backdrop-blur-xl animate-in fade-in duration-300">
-      <div className="bg-white rounded-[3rem] w-full max-w-md p-10 shadow-2xl relative text-slate-900 border-t-8 border-indigo-600 text-center">
-        <button onClick={onClose} className="absolute top-6 right-6 p-2 text-slate-400 hover:text-slate-900"><XMarkIcon className="w-7 h-7" /></button>
-        <div className="w-20 h-20 bg-indigo-50 rounded-3xl flex items-center justify-center mb-8 mx-auto"><DevicePhoneMobileIcon className="w-10 h-10 text-indigo-600" /></div>
-        <h2 className="text-3xl font-brand font-black mb-4 tracking-tight">Install Infinity</h2>
-        <p className="text-slate-500 text-sm mb-10 font-bold leading-relaxed">Pin Infinity to your home screen to use it as your default storage vault.</p>
-        
-        <div className="space-y-8 text-left">
-           {isIOS ? (
-             <>
+    <ModalWrapper onClose={onClose}>
+        <div className="text-center">
+            <div className="w-20 h-20 bg-indigo-50 rounded-3xl flex items-center justify-center mb-8 mx-auto"><DevicePhoneMobileIcon className="w-10 h-10 text-indigo-600" /></div>
+            <h2 className="text-3xl font-brand font-black mb-4 tracking-tight">Install Infinity</h2>
+            <p className="text-slate-500 text-sm mb-10 font-bold leading-relaxed">Pin to home screen to use it as your default device storage.</p>
+            <div className="space-y-8 text-left">
                <div className="flex gap-4 items-start">
                   <div className="w-10 h-10 rounded-xl bg-slate-900 text-white flex items-center justify-center font-black flex-shrink-0 font-brand">1</div>
-                  <p className="text-xs text-slate-600 mt-2 font-bold">Tap the <ShareIcon className="w-4 h-4 inline text-indigo-600 mx-1" /> button in Safari bottom bar.</p>
+                  <p className="text-xs text-slate-600 mt-2 font-bold leading-tight">Tap the <ShareIcon className="w-4 h-4 inline text-indigo-600 mx-1" /> icon in Safari/Chrome toolbar.</p>
                </div>
                <div className="flex gap-4 items-start">
                   <div className="w-10 h-10 rounded-xl bg-indigo-600 text-white flex items-center justify-center font-black flex-shrink-0 font-brand">2</div>
-                  <p className="text-xs text-slate-600 mt-2 font-bold">Select <span className="text-indigo-600">"Add to Home Screen"</span> from the list.</p>
+                  <p className="text-xs text-slate-600 mt-2 font-bold leading-tight">Choose <span className="text-indigo-600">"Add to Home Screen"</span> from the list.</p>
                </div>
-             </>
-           ) : (
-             <>
-               <div className="flex gap-4 items-start">
-                  <div className="w-10 h-10 rounded-xl bg-slate-900 text-white flex items-center justify-center font-black flex-shrink-0 font-brand">1</div>
-                  <p className="text-xs text-slate-600 mt-2 font-bold">Tap the <EllipsisVerticalIcon className="w-4 h-4 inline text-indigo-600 mx-1" /> menu in Chrome's top right.</p>
-               </div>
-               <div className="flex gap-4 items-start">
-                  <div className="w-10 h-10 rounded-xl bg-indigo-600 text-white flex items-center justify-center font-black flex-shrink-0 font-brand">2</div>
-                  <p className="text-xs text-slate-600 mt-2 font-bold">Tap <span className="text-indigo-600">"Install App"</span> to finalize.</p>
-               </div>
-             </>
-           )}
+            </div>
+            <button onClick={onClose} className="w-full mt-10 bg-slate-950 text-white py-5 rounded-2xl font-black uppercase text-xs font-brand active:scale-95 transition-all">Got it</button>
         </div>
-
-        <button onClick={onClose} className="w-full mt-10 bg-slate-950 text-white py-5 rounded-2xl font-black uppercase text-xs font-brand active:scale-95 transition-all">Got it!</button>
-      </div>
-    </div>
+    </ModalWrapper>
   );
 }
 
