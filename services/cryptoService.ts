@@ -37,7 +37,8 @@ async function decompress(data: ArrayBuffer): Promise<ArrayBuffer> {
 }
 
 export async function encryptFile(data: ArrayBuffer, pin: string, skipCompression: boolean = false) {
-  const processedData = skipCompression ? data : await compress(data);
+  const isCompressed = !skipCompression;
+  const processedData = isCompressed ? await compress(data) : data;
   const salt = crypto.getRandomValues(new Uint8Array(16));
   const iv = crypto.getRandomValues(new Uint8Array(12));
   const key = await deriveKey(pin, salt);
@@ -48,10 +49,10 @@ export async function encryptFile(data: ArrayBuffer, pin: string, skipCompressio
     processedData
   );
 
-  return { encryptedData, iv, salt, compressedSize: encryptedData.byteLength };
+  return { encryptedData, iv, salt, compressedSize: encryptedData.byteLength, isCompressed };
 }
 
-export async function decryptFile(encryptedData: ArrayBuffer, pin: string, iv: Uint8Array, salt: Uint8Array) {
+export async function decryptFile(encryptedData: ArrayBuffer, pin: string, iv: Uint8Array, salt: Uint8Array, isCompressed: boolean = true) {
   try {
     const key = await deriveKey(pin, salt);
     const decrypted = await crypto.subtle.decrypt(
@@ -59,7 +60,7 @@ export async function decryptFile(encryptedData: ArrayBuffer, pin: string, iv: U
       key,
       encryptedData
     );
-    return await decompress(decrypted);
+    return isCompressed ? await decompress(decrypted) : decrypted;
   } catch (e) {
     throw new Error('Verification failed');
   }

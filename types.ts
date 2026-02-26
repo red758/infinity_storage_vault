@@ -21,10 +21,10 @@ export interface StoredFile {
   mimeType: string;
   size: number;           
   compressedSize: number; 
+  isCompressed: boolean;
   encryptedData: ArrayBuffer;
   iv: Uint8Array;
   salt: Uint8Array;
-  isChunked?: boolean;
   createdAt: number;
 }
 

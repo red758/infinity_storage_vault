@@ -394,7 +394,7 @@ export default function App() {
       canvas.getContext('2d')?.drawImage(videoRef.current, 0, 0);
       const blob = await new Promise<Blob | null>(res => canvas.toBlob(res, 'image/jpeg', 0.9));
       if (!blob) return;
-      const { encryptedData, iv, salt, compressedSize } = await encryptFile(await blob.arrayBuffer(), vaultPin);
+      const { encryptedData, iv, salt, compressedSize, isCompressed } = await encryptFile(await blob.arrayBuffer(), vaultPin);
       await saveFile({
         id: crypto.randomUUID(),
         vaultId: activeProfile.id,
@@ -403,6 +403,7 @@ export default function App() {
         mimeType: 'image/jpeg',
         size: blob.size,
         compressedSize,
+        isCompressed,
         encryptedData,
         iv,
         salt,
@@ -453,7 +454,7 @@ export default function App() {
         // - Skip compression for large videos/images (low gain, high crash risk)
         const skipCompression = (isVideo || isImage) && isLarge;
 
-        const { encryptedData, iv, salt, compressedSize } = await encryptFile(await file.arrayBuffer(), vaultPin, skipCompression);
+        const { encryptedData, iv, salt, compressedSize, isCompressed } = await encryptFile(await file.arrayBuffer(), vaultPin, skipCompression);
         
         let type: FileType = 'other';
         if (file.type.startsWith('image/')) type = 'image';
@@ -468,11 +469,15 @@ export default function App() {
           mimeType: file.type,
           size: file.size,
           compressedSize,
+          isCompressed,
           encryptedData,
           iv,
           salt,
           createdAt: Date.now()
         });
+
+        // Small delay to prevent mobile browser crashes on multiple large files
+        if (uploadList.length > 1) await new Promise(r => setTimeout(r, 100));
       }
       await loadFiles(activeProfile.id);
     } catch (e: any) {
@@ -486,6 +491,10 @@ export default function App() {
       setIsProcessing(false);
       setProcessingStatus('');
       setIsDragging(false);
+      // Reset input value to allow re-uploading same files
+      if (e.target && 'value' in e.target) {
+        (e.target as any).value = '';
+      }
     }
   };
 
@@ -991,7 +1000,7 @@ function FileCard({ file, vaultPin, onDelete, onDownload, onPreview, onRename, i
   useEffect(() => {
     let url: string | null = null;
     if (file.type === 'image') {
-      decryptFile(file.encryptedData, vaultPin, file.iv, file.salt).then(decrypted => {
+      decryptFile(file.encryptedData, vaultPin, file.iv, file.salt, file.isCompressed).then(decrypted => {
         url = URL.createObjectURL(new Blob([decrypted], { type: file.mimeType }));
         setThumbnailUrl(url);
       });
@@ -1373,7 +1382,7 @@ function PreviewModal({ file, vaultPin, onClose, onDownload }: any) {
 
   useEffect(() => {
     let url: string | null = null;
-    decryptFile(file.encryptedData, vaultPin, file.iv, file.salt)
+    decryptFile(file.encryptedData, vaultPin, file.iv, file.salt, file.isCompressed)
       .then(decrypted => {
         url = URL.createObjectURL(new Blob([decrypted], { type: file.mimeType }));
         setDataUrl(url);
