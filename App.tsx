@@ -93,8 +93,14 @@ export default function App() {
   const [isDragging, setIsDragging] = useState(false);
   const [showMobileSidebar, setShowMobileSidebar] = useState(false);
   const [isPickingFile, setIsPickingFile] = useState(false);
+  const isPickingFileRef = useRef(false);
   const [viewMode, setViewMode] = useState<'grid' | 'list'>('grid');
   const videoRef = useRef<HTMLVideoElement>(null);
+  const lockTimeoutRef = useRef<any>(null);
+
+  useEffect(() => {
+    isPickingFileRef.current = isPickingFile;
+  }, [isPickingFile]);
 
   const isIOS = useMemo(() => {
     return /iPad|iPhone|iPod/.test(navigator.userAgent) && !(window as any).MSStream;
@@ -110,19 +116,40 @@ export default function App() {
     };
 
     const handleVisibilityChange = () => {
-      // Don't lock if we are in the middle of picking a file (mobile system picker hides the tab)
-      if (document.visibilityState === 'hidden' && isUnlocked && !isPickingFile) {
-        handleLockVault();
+      if (document.visibilityState === 'hidden' && isUnlocked) {
+        // Clear any existing lock timeout
+        if (lockTimeoutRef.current) clearTimeout(lockTimeoutRef.current);
+        
+        // Don't lock if we are picking a file or using the camera
+        // We use a ref to ensure we have the latest value in the event listener
+        if (isPickingFileRef.current || showCamera) return;
+
+        // Add a 3-second grace period for mobile visibility flickers
+        // This prevents logout if the OS briefly hides the tab while opening pickers
+        lockTimeoutRef.current = setTimeout(() => {
+          if (document.visibilityState === 'hidden' && !isPickingFileRef.current && !showCamera) {
+            handleLockVault();
+          }
+        }, 3000);
+      } else if (document.visibilityState === 'visible') {
+        // If the tab becomes visible again during the grace period, cancel the lock
+        if (lockTimeoutRef.current) {
+          clearTimeout(lockTimeoutRef.current);
+          lockTimeoutRef.current = null;
+        }
+        // Reset picking flag when we come back to the app
+        setIsPickingFile(false);
       }
     };
 
     window.addEventListener('beforeinstallprompt', handleBeforeInstall);
     document.addEventListener('visibilitychange', handleVisibilityChange);
     return () => {
+      if (lockTimeoutRef.current) clearTimeout(lockTimeoutRef.current);
       window.removeEventListener('beforeinstallprompt', handleBeforeInstall);
       document.removeEventListener('visibilitychange', handleVisibilityChange);
     };
-  }, [isUnlocked]);
+  }, [isUnlocked, showCamera]);
 
   useEffect(() => {
     const restoreSession = async () => {
