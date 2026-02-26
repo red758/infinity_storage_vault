@@ -92,6 +92,7 @@ export default function App() {
   const [isSelectionMode, setIsSelectionMode] = useState(false);
   const [isDragging, setIsDragging] = useState(false);
   const [showMobileSidebar, setShowMobileSidebar] = useState(false);
+  const [isPickingFile, setIsPickingFile] = useState(false);
   const [viewMode, setViewMode] = useState<'grid' | 'list'>('grid');
   const videoRef = useRef<HTMLVideoElement>(null);
 
@@ -109,7 +110,8 @@ export default function App() {
     };
 
     const handleVisibilityChange = () => {
-      if (document.visibilityState === 'hidden' && isUnlocked) {
+      // Don't lock if we are in the middle of picking a file (mobile system picker hides the tab)
+      if (document.visibilityState === 'hidden' && isUnlocked && !isPickingFile) {
         handleLockVault();
       }
     };
@@ -121,6 +123,25 @@ export default function App() {
       document.removeEventListener('visibilitychange', handleVisibilityChange);
     };
   }, [isUnlocked]);
+
+  useEffect(() => {
+    const restoreSession = async () => {
+      const savedPin = sessionStorage.getItem('infinity_vault_pin');
+      const savedProfileId = sessionStorage.getItem('infinity_vault_profile_id');
+      
+      if (savedPin && savedProfileId && !isUnlocked) {
+        const profiles = await getVaultProfiles();
+        const profile = profiles.find(p => p.id === savedProfileId);
+        if (profile) {
+          setVaultPin(savedPin);
+          setActiveProfile(profile);
+          setIsUnlocked(true);
+          await loadFiles(profile.id);
+        }
+      }
+    };
+    restoreSession();
+  }, []);
 
   const handleInstallApp = async () => {
     if (deferredPrompt) {
@@ -146,6 +167,9 @@ export default function App() {
     setSelectedIds(new Set());
     setIsSelectionMode(false);
     setShowMobileSidebar(false);
+    setIsPickingFile(false);
+    sessionStorage.removeItem('infinity_vault_pin');
+    sessionStorage.removeItem('infinity_vault_profile_id');
     window.scrollTo(0, 0);
   };
 
@@ -271,6 +295,11 @@ export default function App() {
       setVaultPin(pinEntry);
       setActiveProfile(authenticatedProfile);
       setIsUnlocked(true);
+      
+      // Session persistence for mobile stability
+      sessionStorage.setItem('infinity_vault_pin', pinEntry);
+      sessionStorage.setItem('infinity_vault_profile_id', authenticatedProfile.id);
+      
       await loadFiles(authenticatedProfile.id);
     } catch (err) {
       setError('Incorrect ID or PIN.');
@@ -374,6 +403,7 @@ export default function App() {
       uploadList = Array.from(e.dataTransfer.files);
     }
     
+    setIsPickingFile(false);
     if (uploadList.length === 0 || !activeProfile) return;
 
     // Check for extremely large files (> 500MB)
@@ -783,7 +813,13 @@ export default function App() {
                 <button onClick={startCamera} title="Camera Snap" className="p-2 sm:p-3 bg-slate-100 rounded-xl sm:rounded-2xl transition-all hover:bg-slate-200 active:scale-95"><CameraIcon className="w-5 h-5 sm:w-6 sm:h-6 text-slate-600" /></button>
                 <label title="Upload Files" className="bg-indigo-600 text-white font-black p-2 sm:px-6 sm:py-4 rounded-xl sm:rounded-2xl cursor-pointer shadow-xl shadow-indigo-600/20 flex items-center gap-2 sm:gap-3 text-xs sm:text-sm hover:bg-indigo-700 transition-all active:scale-95">
                   <CloudArrowUpIcon className="w-5 h-5 sm:w-6 sm:h-6" /> <span className="hidden md:inline">Add</span>
-                  <input type="file" multiple onChange={handleFileUpload} className="hidden" />
+                  <input 
+                    type="file" 
+                    multiple 
+                    onClick={() => setIsPickingFile(true)}
+                    onChange={handleFileUpload} 
+                    className="hidden" 
+                  />
                 </label>
               </>
             )}
