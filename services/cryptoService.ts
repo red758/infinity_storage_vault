@@ -36,8 +36,8 @@ async function decompress(data: ArrayBuffer): Promise<ArrayBuffer> {
   return await new Response(stream).arrayBuffer();
 }
 
-export async function encryptFile(data: ArrayBuffer, pin: string) {
-  const compressed = await compress(data);
+export async function encryptFile(data: ArrayBuffer, pin: string, skipCompression: boolean = false) {
+  const processedData = skipCompression ? data : await compress(data);
   const salt = crypto.getRandomValues(new Uint8Array(16));
   const iv = crypto.getRandomValues(new Uint8Array(12));
   const key = await deriveKey(pin, salt);
@@ -45,7 +45,7 @@ export async function encryptFile(data: ArrayBuffer, pin: string) {
   const encryptedData = await crypto.subtle.encrypt(
     { name: 'AES-GCM', iv },
     key,
-    compressed
+    processedData
   );
 
   return { encryptedData, iv, salt, compressedSize: encryptedData.byteLength };

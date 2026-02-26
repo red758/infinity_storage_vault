@@ -10,7 +10,6 @@
     "lint": "tsc --noEmit"
   },
   "dependencies": {
-    "@google/genai": "^1.42.0",
     "@heroicons/react": "^2.2.0",
     "@tailwindcss/vite": "^4.2.1",
     "motion": "^12.34.3",

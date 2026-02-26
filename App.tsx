@@ -50,7 +50,8 @@ import {
   SquaresPlusIcon,
   Bars3Icon,
   ListBulletIcon,
-  Squares2X2Icon
+  Squares2X2Icon,
+  ClipboardIcon
 } from '@heroicons/react/24/outline';
 
 const AVATAR_COLORS = ['bg-indigo-500', 'bg-emerald-500', 'bg-rose-500', 'bg-amber-500', 'bg-purple-500', 'bg-sky-500'];
@@ -68,7 +69,10 @@ export default function App() {
   const [files, setFiles] = useState<StoredFile[]>([]);
   const [filter, setFilter] = useState<FileType | 'all'>('all');
   const [searchQuery, setSearchQuery] = useState('');
+  const [showHelp, setShowHelp] = useState(false);
+  const [showSecurityNotice, setShowSecurityNotice] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
+  const [processingStatus, setProcessingStatus] = useState('');
   const [vaultPin, setVaultPin] = useState('');
   const [loginName, setLoginName] = useState('');
   const [pinEntry, setPinEntry] = useState('');
@@ -103,9 +107,20 @@ export default function App() {
       e.preventDefault();
       setDeferredPrompt(e);
     };
+
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'hidden' && isUnlocked) {
+        handleLockVault();
+      }
+    };
+
     window.addEventListener('beforeinstallprompt', handleBeforeInstall);
-    return () => window.removeEventListener('beforeinstallprompt', handleBeforeInstall);
-  }, []);
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    return () => {
+      window.removeEventListener('beforeinstallprompt', handleBeforeInstall);
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+    };
+  }, [isUnlocked]);
 
   const handleInstallApp = async () => {
     if (deferredPrompt) {
@@ -315,6 +330,7 @@ export default function App() {
   const capturePhoto = async () => {
     if (!videoRef.current || !activeProfile) return;
     setIsProcessing(true);
+    setProcessingStatus('Securing Photo...');
     try {
       const canvas = document.createElement('canvas');
       canvas.width = videoRef.current.videoWidth;
@@ -338,10 +354,15 @@ export default function App() {
       });
       stopCamera();
       await loadFiles(activeProfile.id);
-    } catch (e) {
-      alert("Capture error. Storage might be full.");
+    } catch (e: any) {
+      if (e.name === 'QuotaExceededError') {
+        alert("Storage Full! Please delete some files to make space.");
+      } else {
+        alert("Capture error. Storage might be full.");
+      }
     } finally {
       setIsProcessing(false);
+      setProcessingStatus('');
     }
   };
 
@@ -354,14 +375,34 @@ export default function App() {
     }
     
     if (uploadList.length === 0 || !activeProfile) return;
+
+    // Check for extremely large files (> 500MB)
+    const tooLarge = uploadList.some(f => f.size > 500 * 1024 * 1024);
+    if (tooLarge && !confirm("Some files are very large (>500MB). Browsers may crash due to memory limits. Continue?")) return;
+
     setIsProcessing(true);
     try {
+      let count = 0;
       for (const file of uploadList) {
-        const { encryptedData, iv, salt, compressedSize } = await encryptFile(await file.arrayBuffer(), vaultPin);
+        count++;
+        setProcessingStatus(`Encrypting ${count}/${uploadList.length}: ${file.name}`);
+        
+        const isVideo = file.type.startsWith('video/');
+        const isImage = file.type.startsWith('image/');
+        const isLarge = file.size > 15 * 1024 * 1024; // 15MB threshold for media
+
+        // Smart Compression: 
+        // - Always compress documents/text (high gain)
+        // - Skip compression for large videos/images (low gain, high crash risk)
+        const skipCompression = (isVideo || isImage) && isLarge;
+
+        const { encryptedData, iv, salt, compressedSize } = await encryptFile(await file.arrayBuffer(), vaultPin, skipCompression);
+        
         let type: FileType = 'other';
         if (file.type.startsWith('image/')) type = 'image';
         else if (file.type.startsWith('video/')) type = 'video';
         else if (file.type.includes('pdf')) type = 'document';
+        
         await saveFile({
           id: crypto.randomUUID(),
           vaultId: activeProfile.id,
@@ -377,8 +418,16 @@ export default function App() {
         });
       }
       await loadFiles(activeProfile.id);
+    } catch (e: any) {
+      if (e.name === 'QuotaExceededError') {
+        alert("Storage Full! Some files could not be saved.");
+      } else {
+        console.error(e);
+        alert("Upload failed. This usually happens with very large files on mobile devices due to memory limits.");
+      }
     } finally {
       setIsProcessing(false);
+      setProcessingStatus('');
       setIsDragging(false);
     }
   };
@@ -498,10 +547,14 @@ export default function App() {
   const stats = useMemo<StorageStats>(() => {
     const originalSize = files.reduce((acc, f) => acc + f.size, 0);
     const compressedSize = files.reduce((acc, f) => acc + f.compressedSize, 0);
+    const saved = Math.max(0, originalSize - compressedSize);
+    const percent = originalSize > 0 ? Math.round((saved / originalSize) * 100) : 0;
+    
     return {
       used: compressedSize,
       total: quota.total,
-      saved: Math.max(0, originalSize - compressedSize),
+      saved,
+      savedPercent: percent,
       imageCount: files.filter(f => f.type === 'image').length,
       videoCount: files.filter(f => f.type === 'video').length,
       docCount: files.filter(f => f.type === 'document').length
@@ -526,6 +579,19 @@ export default function App() {
           </div>
           <h1 className="text-5xl font-brand font-black text-center mb-1 tracking-tight text-white">infinity</h1>
           <p className="text-slate-500 text-center mb-10 text-[11px] font-black uppercase tracking-[0.2em] opacity-80">secure vault</p>
+          
+          {authMode === 'register' && (
+            <div className="mb-6 p-4 bg-amber-500/10 border border-amber-500/20 rounded-2xl">
+              <div className="flex items-center gap-2 text-amber-500 mb-1">
+                <ExclamationTriangleIcon className="w-4 h-4" />
+                <span className="text-[10px] font-black uppercase tracking-widest">Security Notice</span>
+              </div>
+              <p className="text-[10px] text-slate-400 font-bold leading-tight">
+                This vault is 100% local. We never store your PIN. If you forget it or clear browser data, your files are lost forever.
+              </p>
+            </div>
+          )}
+
           <form onSubmit={authMode === 'login' ? handleLogin : handleCreateProfile} className="space-y-4">
             <input type="text" placeholder="Vault ID" className="w-full bg-slate-800 border-none rounded-2xl py-5 px-6 text-white font-bold text-center focus:ring-2 focus:ring-indigo-500 outline-none" value={loginName} onChange={(e) => setLoginName(e.target.value)} required />
             <input type="password" placeholder="PIN" maxLength={8} className="w-full bg-slate-800 border-none rounded-2xl py-5 text-center text-4xl tracking-[0.5em] font-black focus:ring-2 focus:ring-indigo-500 outline-none" value={pinEntry} onChange={(e) => setPinEntry(e.target.value)} required />
@@ -613,6 +679,7 @@ export default function App() {
             <SidebarItem icon={<PhotoIcon />} label="Gallery" active={filter === 'image'} onClick={() => { setFilter('image'); setShowMobileSidebar(false); }} />
             <SidebarItem icon={<VideoCameraIcon />} label="Recordings" active={filter === 'video'} onClick={() => { setFilter('video'); setShowMobileSidebar(false); }} />
             <SidebarItem icon={<DocumentIcon />} label="Documents" active={filter === 'document'} onClick={() => { setFilter('document'); setShowMobileSidebar(false); }} />
+            <SidebarItem icon={<InformationCircleIcon />} label="Help & FAQ" active={false} onClick={() => { setShowHelp(true); setShowMobileSidebar(false); }} />
           </nav>
 
           <div className="space-y-4">
@@ -690,7 +757,12 @@ export default function App() {
           </div>
 
           <div className="flex items-center gap-2 sm:gap-3 flex-shrink-0">
-            {isProcessing && <ArrowPathIcon className="w-5 h-5 sm:w-6 sm:h-6 animate-spin text-indigo-600" />}
+            {isProcessing && (
+              <div className="flex items-center gap-2">
+                <span className="hidden lg:inline text-[9px] font-black uppercase tracking-widest text-indigo-600 animate-pulse">{processingStatus}</span>
+                <ArrowPathIcon className="w-5 h-5 sm:w-6 sm:h-6 animate-spin text-indigo-600" />
+              </div>
+            )}
             
             {isSelectionMode ? (
               <div className="flex items-center gap-2">
@@ -822,6 +894,7 @@ export default function App() {
       </main>
 
       {showInfo && <InfoModal stats={stats} onClose={() => setShowInfo(false)} />}
+      {showHelp && <HelpModal onClose={() => setShowHelp(false)} />}
       {showMaintenance && <MaintenanceModal files={files} handleDownloadAll={handleDownloadAll} handleInstallApp={handleInstallApp} handleExport={handleExport} handleImport={handleImport} deleteVaultProfile={deleteVaultProfile} activeProfile={activeProfile} handleLockVault={handleLockVault} onClose={() => setShowMaintenance(false)} isProcessing={isProcessing} setIsProcessing={setIsProcessing} isPersistent={isPersistent} />}
       {previewFile && <PreviewModal file={previewFile} vaultPin={vaultPin} onClose={() => setPreviewFile(null)} onDownload={() => handleDownload(previewFile)} />}
       {showCamera && <CameraLens videoRef={videoRef} onCapture={capturePhoto} isProcessing={isProcessing} onClose={stopCamera} />}
@@ -849,6 +922,8 @@ function CameraLens({ videoRef, onCapture, isProcessing, onClose }: any) {
 
 function FileCard({ file, vaultPin, onDelete, onDownload, onPreview, onRename, isProcessing, isSelected, isSelectionMode, onSelect, viewMode }: any) {
   const [thumbnailUrl, setThumbnailUrl] = useState<string | null>(null);
+  const [copied, setCopied] = useState(false);
+  const [showMobileMenu, setShowMobileMenu] = useState(false);
 
   useEffect(() => {
     let url: string | null = null;
@@ -860,6 +935,13 @@ function FileCard({ file, vaultPin, onDelete, onDownload, onPreview, onRename, i
     }
     return () => { if (url) URL.revokeObjectURL(url); };
   }, [file.id, vaultPin]);
+
+  const handleCopyName = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    navigator.clipboard.writeText(file.name);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  };
 
   const formatDate = (timestamp: number) => {
     return new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric', year: 'numeric' }).format(new Date(timestamp));
@@ -894,10 +976,13 @@ function FileCard({ file, vaultPin, onDelete, onDownload, onPreview, onRename, i
               {isSelected && <CheckIcon className="w-4 h-4 stroke-[4]" />}
             </div>
           ) : (
-            <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-              <button onClick={(e) => { e.stopPropagation(); onRename(); }} className="p-2 bg-slate-50 text-slate-600 rounded-lg hover:bg-slate-100"><PencilSquareIcon className="w-4 h-4" /></button>
-              <button onClick={(e) => { e.stopPropagation(); onDownload(); }} className="p-2 bg-emerald-50 text-emerald-600 rounded-lg hover:bg-emerald-100"><ArrowDownTrayIcon className="w-4 h-4" /></button>
-              <button onClick={(e) => { e.stopPropagation(); onDelete(); }} className="p-2 bg-rose-50 text-rose-500 rounded-lg hover:bg-rose-100"><TrashIcon className="w-4 h-4" /></button>
+            <div className="flex items-center gap-1">
+              <button onClick={handleCopyName} className="p-2 bg-slate-50 text-slate-600 rounded-lg hover:bg-slate-100 active:scale-90 transition-all">
+                {copied ? <CheckIcon className="w-4 h-4 text-emerald-500" /> : <ClipboardIcon className="w-4 h-4" />}
+              </button>
+              <button onClick={(e) => { e.stopPropagation(); onRename(); }} className="p-2 bg-slate-50 text-slate-600 rounded-lg hover:bg-slate-100 active:scale-90 transition-all"><PencilSquareIcon className="w-4 h-4" /></button>
+              <button onClick={(e) => { e.stopPropagation(); onDownload(); }} className="p-2 bg-emerald-50 text-emerald-600 rounded-lg hover:bg-emerald-100 active:scale-90 transition-all"><ArrowDownTrayIcon className="w-4 h-4" /></button>
+              <button onClick={(e) => { e.stopPropagation(); onDelete(); }} className="p-2 bg-rose-50 text-rose-500 rounded-lg hover:bg-rose-100 active:scale-90 transition-all"><TrashIcon className="w-4 h-4" /></button>
             </div>
           )}
         </div>
@@ -919,6 +1004,33 @@ function FileCard({ file, vaultPin, onDelete, onDownload, onPreview, onRename, i
           {isSelected && <CheckIcon className="w-4 h-4 stroke-[4]" />}
         </div>
       )}
+
+      {!isSelectionMode && (
+        <button 
+          onClick={(e) => { e.stopPropagation(); setShowMobileMenu(!showMobileMenu); }}
+          className="absolute top-3 right-3 z-20 p-2 bg-white/80 backdrop-blur-md rounded-xl text-slate-600 lg:hidden shadow-sm active:scale-90 transition-all"
+        >
+          <EllipsisVerticalIcon className="w-5 h-5" />
+        </button>
+      )}
+
+      <AnimatePresence>
+        {showMobileMenu && (
+          <motion.div 
+            initial={{ opacity: 0, y: 10 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: 10 }}
+            className="absolute top-14 right-3 z-30 bg-white rounded-2xl shadow-2xl border border-slate-100 p-2 flex flex-col gap-1 lg:hidden"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <MobileMenuBtn icon={<ArrowsPointingOutIcon />} label="View" onClick={() => { onPreview(); setShowMobileMenu(false); }} />
+            <MobileMenuBtn icon={<ClipboardIcon />} label="Copy Name" onClick={(e: any) => { handleCopyName(e); setShowMobileMenu(false); }} />
+            <MobileMenuBtn icon={<PencilSquareIcon />} label="Rename" onClick={() => { onRename(); setShowMobileMenu(false); }} />
+            <MobileMenuBtn icon={<ArrowDownTrayIcon />} label="Restore" color="text-emerald-600" onClick={() => { onDownload(); setShowMobileMenu(false); }} />
+            <MobileMenuBtn icon={<TrashIcon />} label="Delete" color="text-rose-600" onClick={() => { onDelete(); setShowMobileMenu(false); }} />
+          </motion.div>
+        )}
+      </AnimatePresence>
       
       <div className="aspect-square bg-slate-100 relative flex items-center justify-center overflow-hidden group/card">
         {file.type === 'image' && thumbnailUrl ? (
@@ -937,6 +1049,9 @@ function FileCard({ file, vaultPin, onDelete, onDownload, onPreview, onRename, i
         {!isSelectionMode && (
           <div className="absolute inset-0 bg-slate-950/70 opacity-0 lg:group-hover/card:opacity-100 transition-opacity hidden lg:flex items-center justify-center gap-2 backdrop-blur-sm pointer-events-auto">
             <button onClick={(e) => { e.stopPropagation(); onPreview(); }} className="p-2.5 bg-white rounded-xl text-slate-900 hover:scale-110 active:scale-95 transition-transform"><ArrowsPointingOutIcon className="w-4 h-4" /></button>
+            <button onClick={handleCopyName} className="p-2.5 bg-white rounded-xl text-slate-900 hover:scale-110 active:scale-95 transition-transform">
+              {copied ? <CheckIcon className="w-4 h-4 text-emerald-500" /> : <ClipboardIcon className="w-4 h-4" />}
+            </button>
             <button onClick={(e) => { e.stopPropagation(); onRename(); }} className="p-2.5 bg-white rounded-xl text-slate-900 hover:scale-110 active:scale-95 transition-transform"><PencilSquareIcon className="w-4 h-4" /></button>
             <button onClick={(e) => { e.stopPropagation(); onDownload(); }} className="p-2.5 bg-emerald-500 rounded-xl text-white hover:scale-110 active:scale-95 transition-transform"><ArrowDownTrayIcon className="w-4 h-4" /></button>
             <button onClick={(e) => { e.stopPropagation(); onDelete(); }} className="p-2.5 bg-rose-500 rounded-xl text-white hover:scale-110 active:scale-95 transition-transform"><TrashIcon className="w-4 h-4" /></button>
@@ -964,7 +1079,6 @@ function FileCard({ file, vaultPin, onDelete, onDownload, onPreview, onRename, i
               <button onClick={(e) => { e.stopPropagation(); onDownload(); }} className="flex-1 flex items-center justify-center gap-1 px-2 py-2 bg-emerald-600 text-white rounded-lg sm:rounded-xl text-[8px] sm:text-[9px] font-black uppercase tracking-widest shadow-lg shadow-emerald-600/20 active:scale-95 transition-all hover:bg-emerald-700">
                  <ArrowDownTrayIcon className="w-3 h-3" /> <span className="hidden sm:inline">Restore</span>
               </button>
-              <button onClick={(e) => { e.stopPropagation(); onRename(); }} className="md:hidden p-2 bg-slate-100 text-slate-600 rounded-lg active:scale-95 transition-all"><PencilSquareIcon className="w-3.5 h-3.5" /></button>
               <button onClick={(e) => { e.stopPropagation(); onDelete(); }} className="md:hidden p-2 bg-rose-50 text-rose-500 rounded-lg active:scale-95 transition-all"><TrashIcon className="w-3.5 h-3.5" /></button>
           </div>
         )}
@@ -973,6 +1087,59 @@ function FileCard({ file, vaultPin, onDelete, onDownload, onPreview, onRename, i
   );
 }
 
+function MobileMenuBtn({ icon, label, onClick, color = "text-slate-600" }: any) {
+  return (
+    <button onClick={onClick} className={`flex items-center gap-3 px-4 py-3 rounded-xl hover:bg-slate-50 active:scale-95 transition-all ${color}`}>
+      {React.cloneElement(icon, { className: "w-4 h-4" })}
+      <span className="text-[10px] font-black uppercase tracking-widest whitespace-nowrap">{label}</span>
+    </button>
+  );
+}
+
+function HelpModal({ onClose }: any) {
+  return (
+    <ModalWrapper onClose={onClose}>
+      <div className="space-y-8">
+        <div className="text-center">
+          <div className="w-16 h-16 bg-indigo-50 rounded-3xl flex items-center justify-center mb-6 mx-auto">
+            <InformationCircleIcon className="w-8 h-8 text-indigo-600" />
+          </div>
+          <h2 className="text-3xl font-brand font-black tracking-tight">help center</h2>
+        </div>
+
+        <div className="space-y-6">
+          <HelpItem 
+            title="Is my data in the cloud?" 
+            desc="No. Infinity is 100% offline. Your files never leave your device. They are stored in your browser's internal database." 
+          />
+          <HelpItem 
+            title="What if I forget my PIN?" 
+            desc="There is no 'Forgot Password' button. Since we don't have your data, we cannot reset your PIN. Keep it safe!" 
+          />
+          <HelpItem 
+            title="How do I free up space?" 
+            desc="Once a file is secured in Infinity, you can safely delete the original from your phone's gallery to reclaim storage." 
+          />
+          <HelpItem 
+            title="How do I move to a new phone?" 
+            desc="Use the 'Backup' feature in Settings to export a .vault file, then 'Restore' it on your new device." 
+          />
+        </div>
+
+        <button onClick={onClose} className="w-full bg-slate-900 text-white py-5 rounded-2xl font-black uppercase text-xs tracking-widest active:scale-95 transition-all">Close Help</button>
+      </div>
+    </ModalWrapper>
+  );
+}
+
+function HelpItem({ title, desc }: { title: string, desc: string }) {
+  return (
+    <div className="border-b border-slate-100 pb-4">
+      <h4 className="text-xs font-black uppercase tracking-widest text-indigo-600 mb-2">{title}</h4>
+      <p className="text-xs text-slate-500 font-bold leading-relaxed">{desc}</p>
+    </div>
+  );
+}
 function MobileNavItem({ icon, active, onClick }: any) {
   return (
     <motion.button 
@@ -1026,14 +1193,41 @@ function InfoModal({ stats, onClose }: any) {
             <div className="text-center">
                 <div className="w-16 h-16 sm:w-20 sm:h-20 bg-emerald-50 rounded-3xl flex items-center justify-center mb-6 sm:mb-8 mx-auto"><CheckBadgeIcon className="w-8 h-8 sm:w-10 sm:h-10 text-emerald-600" /></div>
                 <h2 className="text-3xl sm:text-4xl font-brand font-black mb-4 sm:mb-6 tracking-tight text-center">vault stats</h2>
-                <div className="bg-slate-50 p-5 sm:p-6 rounded-[1.5rem] sm:rounded-[2rem] mb-6">
-                    <p className="text-[9px] sm:text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Total Space Saved</p>
-                    <p className="text-3xl sm:text-4xl font-black text-emerald-600">{formatSize(stats.saved)}</p>
+                
+                <div className="grid grid-cols-1 gap-4 mb-6">
+                  <div className="bg-slate-900 text-white p-6 rounded-[2rem] shadow-xl">
+                      <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-1">Total Space Saved</p>
+                      <p className="text-4xl font-black text-emerald-400">{formatSize(stats.saved)}</p>
+                      <div className="mt-2 inline-flex items-center gap-1 px-2 py-1 bg-emerald-400/10 text-emerald-400 rounded-full text-[10px] font-black">
+                        <BoltIcon className="w-3 h-3" />
+                        {stats.savedPercent}% Efficiency
+                      </div>
+                  </div>
+
+                  <div className="grid grid-cols-3 gap-3">
+                    <StatMini label="Images" count={stats.imageCount} />
+                    <StatMini label="Videos" count={stats.videoCount} />
+                    <StatMini label="Docs" count={stats.docCount} />
+                  </div>
                 </div>
+
+                <p className="text-[10px] text-slate-400 font-bold mb-8 leading-relaxed">
+                  Tip: To save physical storage on your device, delete the original files from your gallery after they are secured in the vault.
+                </p>
+
                 <button onClick={onClose} className="w-full bg-slate-900 text-white py-4 sm:py-5 rounded-2xl font-black uppercase text-xs tracking-widest active:scale-95 transition-all">Understood</button>
             </div>
         </ModalWrapper>
     );
+}
+
+function StatMini({ label, count }: { label: string, count: number }) {
+  return (
+    <div className="bg-slate-50 p-3 rounded-2xl border border-slate-100">
+      <p className="text-[8px] font-black text-slate-400 uppercase tracking-tighter mb-1">{label}</p>
+      <p className="text-lg font-black text-slate-900">{count}</p>
+    </div>
+  );
 }
 
 function MaintenanceModal({ files, handleDownloadAll, handleInstallApp, handleExport, handleImport, deleteVaultProfile, activeProfile, handleLockVault, onClose, isProcessing, setIsProcessing, isPersistent }: any) {

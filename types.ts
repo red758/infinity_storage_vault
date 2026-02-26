@@ -24,6 +24,7 @@ export interface StoredFile {
   encryptedData: ArrayBuffer;
   iv: Uint8Array;
   salt: Uint8Array;
+  isChunked?: boolean;
   createdAt: number;
 }
 
