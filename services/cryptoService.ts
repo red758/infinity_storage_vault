@@ -52,6 +52,17 @@ export async function encryptFile(data: ArrayBuffer, pin: string, skipCompressio
   return { encryptedData, iv, salt, compressedSize: encryptedData.byteLength, isCompressed };
 }
 
+export async function encryptChunk(data: ArrayBuffer, pin: string, salt: Uint8Array) {
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const key = await deriveKey(pin, salt);
+  const encryptedData = await crypto.subtle.encrypt(
+    { name: 'AES-GCM', iv },
+    key,
+    data
+  );
+  return { encryptedData, iv };
+}
+
 export async function decryptFile(encryptedData: ArrayBuffer, pin: string, iv: Uint8Array, salt: Uint8Array, isCompressed: boolean = true) {
   try {
     const key = await deriveKey(pin, salt);
@@ -64,4 +75,13 @@ export async function decryptFile(encryptedData: ArrayBuffer, pin: string, iv: U
   } catch (e) {
     throw new Error('Verification failed');
   }
+}
+
+export async function decryptChunk(encryptedData: ArrayBuffer, pin: string, iv: Uint8Array, salt: Uint8Array) {
+  const key = await deriveKey(pin, salt);
+  return await crypto.subtle.decrypt(
+    { name: 'AES-GCM', iv },
+    key,
+    encryptedData
+  );
 }

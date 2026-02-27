@@ -22,9 +22,12 @@ export interface StoredFile {
   size: number;           
   compressedSize: number; 
   isCompressed: boolean;
-  encryptedData: ArrayBuffer;
+  encryptedData?: ArrayBuffer; // Optional if chunked
   iv: Uint8Array;
   salt: Uint8Array;
+  isChunked?: boolean;
+  chunkIds?: string[]; // IDs of chunks in the secure_files store
+  chunkIvs?: Uint8Array[]; // IVs for each chunk
   createdAt: number;
 }
 

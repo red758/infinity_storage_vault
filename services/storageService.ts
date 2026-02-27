@@ -3,16 +3,14 @@ import { StoredFile, VaultBackup, VaultProfile } from '../types';
 
 const DB_NAME = 'LocalVaultDB_v2'; // Changed name to ensure fresh start if corrupted
 const STORE_NAME = 'secure_files';
+const CHUNK_STORE = 'file_chunks';
 const META_STORE = 'vault_meta'; 
-const DB_VERSION = 10; // High version to trigger upgrade
+const DB_VERSION = 11; // Incremented for chunk store
 
 let dbInstance: IDBDatabase | null = null;
 
 export const initDB = (): Promise<IDBDatabase> => {
-  // Fix: IDBDatabase does not have a readyState property. Check for dbInstance existence instead.
-  if (dbInstance) {
-    return Promise.resolve(dbInstance);
-  }
+  if (dbInstance) return Promise.resolve(dbInstance);
 
   return new Promise((resolve, reject) => {
     const request = indexedDB.open(DB_NAME, DB_VERSION);
@@ -20,20 +18,15 @@ export const initDB = (): Promise<IDBDatabase> => {
     request.onupgradeneeded = (e: any) => {
       const db = request.result;
       
-      // 1. Setup File Store
       if (!db.objectStoreNames.contains(STORE_NAME)) {
         const fileStore = db.createObjectStore(STORE_NAME, { keyPath: 'id' });
         fileStore.createIndex('vaultId', 'vaultId', { unique: false });
-      } else {
-        // Ensure index exists on existing store
-        const transaction = request.transaction;
-        const fileStore = transaction.objectStore(STORE_NAME);
-        if (!fileStore.indexNames.contains('vaultId')) {
-          fileStore.createIndex('vaultId', 'vaultId', { unique: false });
-        }
+      }
+      
+      if (!db.objectStoreNames.contains(CHUNK_STORE)) {
+        db.createObjectStore(CHUNK_STORE, { keyPath: 'id' });
       }
 
-      // 2. Setup Meta Store
       if (!db.objectStoreNames.contains(META_STORE)) {
         db.createObjectStore(META_STORE, { keyPath: 'id' });
       }
@@ -172,12 +165,49 @@ export const updateFile = async (file: StoredFile): Promise<void> => {
 
 export const deleteFile = async (id: string): Promise<void> => {
   const db = await initDB();
-  return new Promise((resolve, reject) => {
-    const transaction = db.transaction(STORE_NAME, 'readwrite');
+  const file = await new Promise<StoredFile | undefined>((resolve, reject) => {
+    const transaction = db.transaction(STORE_NAME, 'readonly');
     const store = transaction.objectStore(STORE_NAME);
-    store.delete(id);
+    const request = store.get(id);
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error);
+  });
+
+  return new Promise((resolve, reject) => {
+    const transaction = db.transaction([STORE_NAME, CHUNK_STORE], 'readwrite');
+    transaction.objectStore(STORE_NAME).delete(id);
+    
+    if (file?.isChunked && file.chunkIds) {
+      const chunkStore = transaction.objectStore(CHUNK_STORE);
+      for (const chunkId of file.chunkIds) {
+        chunkStore.delete(chunkId);
+      }
+    }
+
     transaction.oncomplete = () => resolve();
     transaction.onerror = () => reject(transaction.error);
+  });
+};
+
+export const saveChunk = async (id: string, data: ArrayBuffer): Promise<void> => {
+  const db = await initDB();
+  return new Promise((resolve, reject) => {
+    const transaction = db.transaction(CHUNK_STORE, 'readwrite');
+    const store = transaction.objectStore(CHUNK_STORE);
+    store.put({ id, data });
+    transaction.oncomplete = () => resolve();
+    transaction.onerror = () => reject(transaction.error);
+  });
+};
+
+export const getChunk = async (id: string): Promise<ArrayBuffer> => {
+  const db = await initDB();
+  return new Promise((resolve, reject) => {
+    const transaction = db.transaction(CHUNK_STORE, 'readonly');
+    const store = transaction.objectStore(CHUNK_STORE);
+    const request = store.get(id);
+    request.onsuccess = () => resolve(request.result?.data);
+    request.onerror = () => reject(request.error);
   });
 };
 

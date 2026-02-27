@@ -13,9 +13,11 @@ import {
   exportFullBackup,
   importFullBackup,
   deleteVaultProfile,
-  updateFile
+  updateFile,
+  saveChunk,
+  getChunk
 } from './services/storageService.ts';
-import { encryptFile, decryptFile } from './services/cryptoService.ts';
+import { encryptFile, decryptFile, encryptChunk, decryptChunk } from './services/cryptoService.ts';
 import { 
   FolderIcon, 
   PhotoIcon, 
@@ -443,40 +445,76 @@ export default function App() {
       let count = 0;
       for (const file of uploadList) {
         count++;
-        setProcessingStatus(`Encrypting ${count}/${uploadList.length}: ${file.name}`);
+        setProcessingStatus(`Processing ${count}/${uploadList.length}: ${file.name}`);
         
         const isVideo = file.type.startsWith('video/');
         const isImage = file.type.startsWith('image/');
         const isLarge = file.size > 15 * 1024 * 1024; // 15MB threshold for media
+        const isExtremelyLarge = file.size > 25 * 1024 * 1024; // 25MB threshold for chunking
 
-        // Smart Compression: 
-        // - Always compress documents/text (high gain)
-        // - Skip compression for large videos/images (low gain, high crash risk)
-        const skipCompression = (isVideo || isImage) && isLarge;
-
-        const { encryptedData, iv, salt, compressedSize, isCompressed } = await encryptFile(await file.arrayBuffer(), vaultPin, skipCompression);
-        
         let type: FileType = 'other';
         if (file.type.startsWith('image/')) type = 'image';
         else if (file.type.startsWith('video/')) type = 'video';
         else if (file.type.includes('pdf')) type = 'document';
-        
-        await saveFile({
-          id: crypto.randomUUID(),
-          vaultId: activeProfile.id,
-          name: file.name,
-          type,
-          mimeType: file.type,
-          size: file.size,
-          compressedSize,
-          isCompressed,
-          encryptedData,
-          iv,
-          salt,
-          createdAt: Date.now()
-        });
 
-        // Small delay to prevent mobile browser crashes on multiple large files
+        if (isExtremelyLarge) {
+          // Chunked Upload for Large Files
+          const CHUNK_SIZE = 10 * 1024 * 1024; // 10MB chunks
+          const salt = crypto.getRandomValues(new Uint8Array(16));
+          const chunkIds: string[] = [];
+          const chunkIvs: Uint8Array[] = [];
+          
+          const totalChunks = Math.ceil(file.size / CHUNK_SIZE);
+          for (let i = 0; i < totalChunks; i++) {
+            setProcessingStatus(`Encrypting ${file.name} (Part ${i + 1}/${totalChunks})...`);
+            const start = i * CHUNK_SIZE;
+            const end = Math.min(start + CHUNK_SIZE, file.size);
+            const chunkBuffer = await file.slice(start, end).arrayBuffer();
+            const { encryptedData, iv } = await encryptChunk(chunkBuffer, vaultPin, salt);
+            
+            const chunkId = crypto.randomUUID();
+            await saveChunk(chunkId, encryptedData);
+            chunkIds.push(chunkId);
+            chunkIvs.push(iv);
+          }
+
+          await saveFile({
+            id: crypto.randomUUID(),
+            vaultId: activeProfile.id,
+            name: file.name,
+            type,
+            mimeType: file.type,
+            size: file.size,
+            compressedSize: file.size, // No compression for large files
+            isCompressed: false,
+            iv: new Uint8Array(12), // Dummy for chunked
+            salt,
+            isChunked: true,
+            chunkIds,
+            chunkIvs,
+            createdAt: Date.now()
+          });
+        } else {
+          // Normal Upload
+          const skipCompression = (isVideo || isImage) && isLarge;
+          const { encryptedData, iv, salt, compressedSize, isCompressed } = await encryptFile(await file.arrayBuffer(), vaultPin, skipCompression);
+          
+          await saveFile({
+            id: crypto.randomUUID(),
+            vaultId: activeProfile.id,
+            name: file.name,
+            type,
+            mimeType: file.type,
+            size: file.size,
+            compressedSize,
+            isCompressed,
+            encryptedData,
+            iv,
+            salt,
+            createdAt: Date.now()
+          });
+        }
+
         if (uploadList.length > 1) await new Promise(r => setTimeout(r, 100));
       }
       await loadFiles(activeProfile.id);
@@ -578,8 +616,22 @@ export default function App() {
   const handleDownload = async (file: StoredFile) => {
     setIsProcessing(true);
     try {
-      const decrypted = await decryptFile(file.encryptedData, vaultPin, file.iv, file.salt);
-      const url = URL.createObjectURL(new Blob([decrypted], { type: file.mimeType }));
+      let blob: Blob;
+      if (file.isChunked && file.chunkIds && file.chunkIvs) {
+        const chunks: ArrayBuffer[] = [];
+        for (let i = 0; i < file.chunkIds.length; i++) {
+          setProcessingStatus(`Restoring ${file.name} (Part ${i + 1}/${file.chunkIds.length})...`);
+          const encryptedChunk = await getChunk(file.chunkIds[i]);
+          const decryptedChunk = await decryptChunk(encryptedChunk, vaultPin, file.chunkIvs[i], file.salt);
+          chunks.push(decryptedChunk);
+        }
+        blob = new Blob(chunks, { type: file.mimeType });
+      } else {
+        const decrypted = await decryptFile(file.encryptedData!, vaultPin, file.iv, file.salt, file.isCompressed);
+        blob = new Blob([decrypted], { type: file.mimeType });
+      }
+      
+      const url = URL.createObjectURL(blob);
       const link = document.createElement('a');
       link.href = url;
       link.download = file.name;
@@ -587,6 +639,7 @@ export default function App() {
       URL.revokeObjectURL(url);
     } finally {
       setIsProcessing(false);
+      setProcessingStatus('');
     }
   };
 
@@ -595,18 +648,13 @@ export default function App() {
     setIsProcessing(true);
     try {
       for (const file of files) {
-        const decrypted = await decryptFile(file.encryptedData, vaultPin, file.iv, file.salt);
-        const url = URL.createObjectURL(new Blob([decrypted], { type: file.mimeType }));
-        const link = document.createElement('a');
-        link.href = url;
-        link.download = file.name;
-        link.click();
-        URL.revokeObjectURL(url);
-        await new Promise(r => setTimeout(r, 800));
+        await handleDownload(file);
+        await new Promise(r => setTimeout(r, 600));
       }
       alert("All files restored.");
     } finally {
       setIsProcessing(false);
+      setProcessingStatus('');
     }
   };
 
@@ -999,12 +1047,33 @@ function FileCard({ file, vaultPin, onDelete, onDownload, onPreview, onRename, i
 
   useEffect(() => {
     let url: string | null = null;
-    if (file.type === 'image') {
-      decryptFile(file.encryptedData, vaultPin, file.iv, file.salt, file.isCompressed).then(decrypted => {
-        url = URL.createObjectURL(new Blob([decrypted], { type: file.mimeType }));
-        setThumbnailUrl(url);
-      });
-    }
+    const loadThumbnail = async () => {
+      try {
+        if (file.type === 'image') {
+          let blob: Blob;
+          if (file.isChunked && file.chunkIds && file.chunkIvs) {
+            // For thumbnails, we only decrypt the first chunk to save memory/time
+            // This works for most image formats (JPEG/PNG) to show a partial preview
+            // or we can decrypt all if it's not too many. Let's do all for quality.
+            const chunks: ArrayBuffer[] = [];
+            for (let i = 0; i < file.chunkIds.length; i++) {
+              const encryptedChunk = await getChunk(file.chunkIds[i]);
+              const decryptedChunk = await decryptChunk(encryptedChunk, vaultPin, file.chunkIvs[i], file.salt);
+              chunks.push(decryptedChunk);
+            }
+            blob = new Blob(chunks, { type: file.mimeType });
+          } else {
+            const decrypted = await decryptFile(file.encryptedData!, vaultPin, file.iv, file.salt, file.isCompressed);
+            blob = new Blob([decrypted], { type: file.mimeType });
+          }
+          url = URL.createObjectURL(blob);
+          setThumbnailUrl(url);
+        }
+      } catch (err) {
+        console.error("Thumbnail load failed", err);
+      }
+    };
+    loadThumbnail();
     return () => { if (url) URL.revokeObjectURL(url); };
   }, [file.id, vaultPin]);
 
@@ -1382,12 +1451,30 @@ function PreviewModal({ file, vaultPin, onClose, onDownload }: any) {
 
   useEffect(() => {
     let url: string | null = null;
-    decryptFile(file.encryptedData, vaultPin, file.iv, file.salt, file.isCompressed)
-      .then(decrypted => {
-        url = URL.createObjectURL(new Blob([decrypted], { type: file.mimeType }));
+    const assemble = async () => {
+      try {
+        let blob: Blob;
+        if (file.isChunked && file.chunkIds && file.chunkIvs) {
+          const chunks: ArrayBuffer[] = [];
+          for (let i = 0; i < file.chunkIds.length; i++) {
+            const encryptedChunk = await getChunk(file.chunkIds[i]);
+            const decryptedChunk = await decryptChunk(encryptedChunk, vaultPin, file.chunkIvs[i], file.salt);
+            chunks.push(decryptedChunk);
+          }
+          blob = new Blob(chunks, { type: file.mimeType });
+        } else {
+          const decrypted = await decryptFile(file.encryptedData!, vaultPin, file.iv, file.salt, file.isCompressed);
+          blob = new Blob([decrypted], { type: file.mimeType });
+        }
+        url = URL.createObjectURL(blob);
         setDataUrl(url);
-      })
-      .finally(() => setIsDecrypting(false));
+      } catch (err) {
+        console.error("Decryption failed", err);
+      } finally {
+        setIsDecrypting(false);
+      }
+    };
+    assemble();
     return () => { if (url) URL.revokeObjectURL(url); };
   }, [file.id, vaultPin]);
 
