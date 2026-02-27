@@ -436,9 +436,9 @@ export default function App() {
     setIsPickingFile(false);
     if (uploadList.length === 0 || !activeProfile) return;
 
-    // Check for extremely large files (> 500MB)
-    const tooLarge = uploadList.some(f => f.size > 500 * 1024 * 1024);
-    if (tooLarge && !confirm("Some files are very large (>500MB). Browsers may crash due to memory limits. Continue?")) return;
+    // Check for extremely large files (> 2GB)
+    const tooLarge = uploadList.some(f => f.size > 2000 * 1024 * 1024);
+    if (tooLarge && !confirm("Some files are extremely large (>2GB). While the vault supports this, it may take a long time. Continue?")) return;
 
     setIsProcessing(true);
     try {
